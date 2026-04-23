@@ -1,0 +1,182 @@
+output_dir: ablation_stage_1_init
+logging_dir: logs
+seed: 43
+
+
+report_to:
+  tracker_name: Helios-Train
+  wandb_name: ablation_stage_1_init
+  report_to: wandb
+
+
+data_config:
+  # ---- Base ----
+  use_shuffle: true
+  pin_memory: true
+  persistent_workers: true
+  force_rebuild: true
+  single_res: true
+  single_height: 384
+  single_width: 640
+  dataloader_num_workers: 8
+  prefetch_factor: 2
+  caption_dropout_p: 0
+  id_token: ""
+  # ---- Stage 1 ----
+  use_stage1_dataset: true
+  instance_data_root:
+    - "demo_data/ultravideo-long"
+
+
+model_config:
+  # ---- Path ----
+  pretrained_model_name_or_path: "BestWishYsh/Helios-Base"
+  transformer_model_name_or_path: "Wan-AI/Wan2.1-T2V-14B-Diffusers"
+  load_checkpoints_custom: false
+  # load_model_path:
+  load_dcp: false
+  # load_dcp_path:
+  # ---- Vae ----
+  upcast_vae: true
+  enable_slicing: false
+  enable_tiling: false
+  # ---- Lora ----
+  lora_rank: 128
+  lora_alpha: 128.0
+  lora_dropout: 0.0
+  lora_layers: "all-linear"
+  # lora_target_modules:
+  #   - to_k
+  #   - to_q
+  #   - to_v
+  #   - to_out.0
+  #   - ffn.net.0.proj
+  #   - ffn.net.2
+  lora_exclude_modules:
+    - down
+    - up
+  # ---- Other ----
+  train_norm_layers: false
+
+
+validation_config:
+  validation_steps: 500
+  validation_height: 384
+  validation_width: 640
+  validation_max_num_frames: 99
+  validation_prompts:
+    - "A stylish woman walks down a Tokyo street filled with warm glowing neon and animated city signage. She wears a black leather jacket, a long red dress, and black boots, and carries a black purse. She wears sunglasses and red lipstick. She walks confidently and casually. The street is damp and reflective, creating a mirror effect of the colorful lights. Many pedestrians walk about."
+    # - "Several giant wooly mammoths approach treading through a snowy meadow, their long wooly fur lightly blows in the wind as they walk, snow covered trees and dramatic snow capped mountains in the distance, mid afternoon light with wispy clouds and a sun high in the distance creates a warm glow, the low camera view is stunning capturing the large furry mammal with beautiful photography, depth of field."
+    # - "A movie trailer featuring the adventures of the 30 year old space man wearing a red wool knitted motorcycle helmet, blue sky, salt desert, cinematic style, shot on 35mm film, vivid colors."
+  validation_guidance_scale: 5.0
+  validation_latent_window_size:
+    - 9
+  num_validation_videos: 1
+  num_inference_steps: 50
+  # ---- Dynamic Shifting ----
+  use_dynamic_shifting: true
+  time_shift_type: "exponential"  # ["exponential", "linear"]
+
+
+training_config:
+  # ---- Environment ----
+  allow_tf32: false
+  gradient_checkpointing: true
+  enable_xformers_memory_efficient_attention: false
+  enable_npu_flash_attention: false
+  upcast_before_saving: false
+  offload: false
+  mixed_precision: "bf16"
+  # ---- Training Resource ----
+  max_train_steps: 1000000
+  train_batch_size: 2
+  gradient_accumulation_steps: 1
+  checkpointing_steps: 500
+  resume_from_checkpoint: "latest"
+  save_checkpoints_custom: false
+  # ---- Optimizer ----
+  learning_rate: 5e-5
+  lr_scheduler: "constant"
+  lr_warmup_steps: 500
+  optimizer: "adamw"
+  adam_beta1: 0.9
+  adam_beta2: 0.999
+  adam_weight_decay: 1e-04
+  adam_epsilon: 1e-08
+  max_grad_norm: 1.0
+  weighting_scheme: "logit_normal"  # ["sigma_sqrt", "logit_normal", "mode", "cosmap", "none"]
+  logit_mean: 0.0
+  logit_std: 1.0
+  mode_scale: 1.29
+  # ---- Dynamic Shifting Parameters ----
+  use_dynamic_shifting: false
+  time_shift_type: "exponential"  # ["exponential", "linear"]
+  base_seq_len: 256
+  max_seq_len: 4096
+  base_shift: 0.5
+  max_shift: 1.15
+  # ---- VAE Decode Parameters ----
+  vae_decode_type: "default"
+  # ---- EMA Parameters ----
+  use_ema: false
+  use_ema_validation: false
+  ema_decay: 0.999
+  ema_start_step: 250
+  ema_zero3_port: 10543
+  ema_deepspeed_config_file: "scripts/accelerate_configs/zero3.json"
+  # ---- Stage 1 Parameters ----
+  is_enable_stage1: true
+  history_sizes:
+    - 16
+    - 2
+    - 1
+  latent_window_size:
+    # - 12
+    # - 10
+    - 9
+    # - 8
+    # - 6
+    # - 5
+    # - 4
+    # - 3
+    # - 2
+    # - 1
+  is_random_drop: true
+  random_drop_v2v_ratio: 0.4
+  random_drop_t2v_ratio: 0.4
+  # 
+  corrupt_model_input: false
+  corrupt_mode_model_input: "noise"
+  corrupt_mode_prob_model_input: 0.9
+  is_frame_independent_corrupt_model_input: true
+  is_chunk_independent_corrupt_model_input: false
+  noise_corrupt_ratio_model_input: 0.33333333333333
+  noise_corrupt_clean_prob_model_input: 0.1
+  downsample_min_corrupt_ratio_model_input: 0.9
+  downsample_max_corrupt_ratio_model_input: 1.0
+  corrupt_history: true
+  corrupt_mode_history: "noise"
+  corrupt_mode_prob_history: 0.9
+  is_frame_independent_corrupt_history: true
+  is_chunk_independent_corrupt_history: false
+  noise_corrupt_ratio_history_short: 0.33333333333333
+  noise_corrupt_ratio_history_mid: 0.33333333333333
+  noise_corrupt_ratio_history_long: 0.33333333333333
+  noise_corrupt_clean_prob_history: 0.1
+  downsample_min_corrupt_ratio_history: 0.9
+  downsample_max_corrupt_ratio_history: 1.0
+  # 
+  is_amplify_history: false
+  history_scale_mode: "per_head"
+  # 
+  is_train_full_patch_embedding: false
+  is_train_lora_patch_embedding: true
+  has_multi_term_memory_patch: true
+  is_train_full_multi_term_memory_patchg: true
+  is_train_lora_multi_term_memory_patchg: false
+  zero_history_timestep: true
+  guidance_cross_attn: true
+  restrict_self_attn: false
+  is_train_restrict_lora: false
+  restrict_lora: false
+  restrict_lora_rank: 128

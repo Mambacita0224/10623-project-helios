@@ -1,0 +1,6 @@
+# Please refer to here for installation the latest version: https://github.com/Ascend/pytorch?tab=readme-ov-file#ascend-auxiliary-software
+torch==2.9.0
+torchvision==0.24.0
+torchaudio==2.9.0
+torch_npu==2.9.0
+triton==3.5.1

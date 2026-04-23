@@ -1,0 +1,75 @@
+*.py[cod]
+*.gif
+*.bmp
+*.mov
+*.mkv
+*.mp4
+*.log
+*.zip
+*.pt
+*.pth
+*.ckpt
+*.safetensors
+*.backup
+*.pkl
+*.html
+*.pdf
+*.whl
+*.txt.gz
+!.gitignore
+!requirements.txt
+!requirements_npu.txt
+.DS_Store
+*DS_Store
+poetry.lock
+__pycache__/
+*.cache*
+*temp_path*
+*_ckpt
+*_results
+*temp
+*.pem
+*profile
+.gradio
+ablation_*
+cache
+wandb
+output_helios
+AMT-S.yaml
+bpe_simple_vocab_16e6.txt
+Videoreward
+1_formal_ckpts
+demo_data
+
+# --- project additions ---
+# Downloaded model weights (large, Helios checkpoints live under BestWishYsh/)
+BestWishYsh/
+checkpoints/
+adapters/
+outputs/
+runs/
+
+# Modal local artifacts
+.modal/
+modal.toml
+.env
+.env.*
+!.env.example
+
+# Python envs
+.venv/
+venv/
+env/
+.python-version
+
+# Editor / OS
+.idea/
+.vscode/
+*.swp
+
+# Jupyter checkpoints
+.ipynb_checkpoints/
+
+# Data (assume large) — track manifests only, not raw files
+data/raw/
+data/processed/
