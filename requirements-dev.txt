@@ -1,0 +1,27 @@
+# Local developer environment for this fork.
+#
+# Covers everything needed locally: dispatching Modal jobs, running
+# eval/compute_emr_ttfm.py, opening the notebook. All heavy compute (Helios
+# inference, SDXL-Turbo, AMT, Farneback on Mixkit) runs inside Modal
+# containers whose deps are declared inline in modal/*.py and tools/*.py.
+#
+# The upstream requirements.txt is Linux + CUDA 12.6 training-only and
+# is not used on developer laptops.
+#
+#     conda create -n helios-dev python=3.11 -y
+#     conda activate helios-dev
+#     pip install --upgrade pip
+#     pip install -r requirements-dev.txt
+#     modal profile current   # sanity check; run `modal token new` if empty
+
+modal>=0.68
+
+opencv-python>=4.10.0
+numpy<2.0.0
+matplotlib>=3.8
+tqdm>=4.66
+
+huggingface_hub[cli]>=0.28
+
+jupyter>=1.1
+ipykernel>=6.29
