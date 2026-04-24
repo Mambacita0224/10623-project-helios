@@ -80,3 +80,7 @@ modal run tools/prepare_mixkit.py::pull_manifest
 
 Volume: `helios-mixkit`. The manifest is written locally to `data/train/mixkit_curated.jsonl`.
 
+Curated clips are encoded as **H.264** (yuv420p) via `ffmpeg` so they open in macOS Preview.
+If you still have older **`mp4v`** files from an earlier run, re-encode locally:
+`bash tools/reencode_mp4_h264_local.sh outputs/mixkit_qc30` (requires `brew install ffmpeg`).
+

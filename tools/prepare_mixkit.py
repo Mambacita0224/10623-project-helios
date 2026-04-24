@@ -50,7 +50,7 @@ TARGET_W = 640
 EARLY_K = 24
 
 # Filtering band (see docs/metrics.md §2.1 for rationale).
-EARLY_FLOW_MIN = 3.0
+EARLY_FLOW_MIN = 2.5
 EMR_LOW = 0.7
 EMR_HIGH = 1.3
 
@@ -168,18 +168,66 @@ def _compute_flow_stats(frames_rgb):
 
 
 def _save_clip_mp4(frames_rgb, out_path: str):
-    import cv2
+    """Write RGB uint8 ``[N,H,W,3]`` to MP4 using **H.264** (yuv420p).
 
-    h, w = frames_rgb.shape[1], frames_rgb.shape[2]
-    writer = cv2.VideoWriter(
+    OpenCV's default ``mp4v`` (MPEG-4 Part 2) is valid but often **won't open in macOS
+    Preview / QuickTime**; training and ffprobe are fine, human QC is painful.
+    Requires ``ffmpeg`` on PATH (included in the Modal image for this app).
+    """
+    import subprocess
+
+    import numpy as np
+
+    if frames_rgb.dtype != np.uint8:
+        frames_rgb = frames_rgb.astype(np.uint8, copy=False)
+    if not frames_rgb.flags.c_contiguous:
+        frames_rgb = np.ascontiguousarray(frames_rgb)
+
+    n, h, w = int(frames_rgb.shape[0]), int(frames_rgb.shape[1]), int(frames_rgb.shape[2])
+    cmd = [
+        "ffmpeg",
+        "-y",
+        "-f",
+        "rawvideo",
+        "-vcodec",
+        "rawvideo",
+        "-s",
+        f"{w}x{h}",
+        "-pix_fmt",
+        "rgb24",
+        "-r",
+        str(TARGET_FPS),
+        "-i",
+        "-",
+        "-an",
+        "-c:v",
+        "libx264",
+        "-preset",
+        "veryfast",
+        "-crf",
+        "23",
+        "-pix_fmt",
+        "yuv420p",
+        "-movflags",
+        "+faststart",
         out_path,
-        cv2.VideoWriter_fourcc(*"mp4v"),
-        TARGET_FPS,
-        (w, h),
+    ]
+    proc = subprocess.Popen(
+        cmd,
+        stdin=subprocess.PIPE,
+        stderr=subprocess.PIPE,
     )
-    for f in frames_rgb:
-        writer.write(cv2.cvtColor(f, cv2.COLOR_RGB2BGR))
-    writer.release()
+    if proc.stdin is None:
+        raise RuntimeError("ffmpeg stdin not available")
+    try:
+        proc.stdin.write(frames_rgb.tobytes())
+    finally:
+        proc.stdin.close()
+    err = proc.stderr.read() if proc.stderr else b""
+    code = proc.wait()
+    if code != 0:
+        tail = err.decode(errors="replace")[-4000:]
+        raise RuntimeError(f"ffmpeg failed (exit {code}) for {out_path}: {tail}")
 
 
 def _caption_from_filename(fname: str, category: str) -> str:
