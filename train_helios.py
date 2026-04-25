@@ -36,7 +36,6 @@ from helios.modules.helios_kernels import (
 from helios.modules.transformer_helios import HeliosTransformer3DModel
 from helios.pipelines.pipeline_helios import HeliosPipeline
 from helios.scheduler.scheduling_helios import HeliosScheduler
-from helios.utils.create_ema_zero3_lora import create_ema_final, gather_zero3ema
 from helios.utils.train_config import Args
 from helios.utils.utils_base import (
     NORM_LAYER_PREFIXES,
@@ -91,6 +90,7 @@ from diffusers.utils import (
     convert_unet_state_dict_to_peft,
     export_to_video,
     is_wandb_available,
+    load_image,
 )
 from diffusers.utils.import_utils import is_torch_npu_available, is_xformers_available
 from diffusers.utils.torch_utils import is_compiled_module
@@ -106,6 +106,53 @@ logger = get_logger(__name__)
 
 if is_torch_npu_available():
     torch.npu.config.allow_internal_format = False
+
+
+def _resolve_i2v_validation_image_path(validation_config) -> str | None:
+    if getattr(validation_config, "validation_image_path", None):
+        return validation_config.validation_image_path
+    if validation_config.validation_images and len(validation_config.validation_images) > 0:
+        return validation_config.validation_images[0]
+    return None
+
+
+def _load_i2v_validation_image(path: str, height: int, width: int):
+    """Load and resize a first frame for `HeliosPipeline` I2V validation (paths relative to cwd)."""
+    from pathlib import Path
+
+    p = Path(path)
+    if not p.is_file():
+        alt = Path.cwd() / path
+        if alt.is_file():
+            p = alt
+        else:
+            raise FileNotFoundError(
+                f"I2V validation image not found: {path!r} (also tried {alt!r} cwd={Path.cwd()!r})"
+            )
+    img = load_image(str(p))
+    return img.resize((width, height))
+
+
+def _apply_validation_sample_mode_to_pipe_kwargs(args, pipeline_args: dict) -> None:
+    """Add `image` and noise sigmas to `pipeline_args` for I2V; t2v unchanged."""
+    vc = args.validation_config
+    mode = getattr(vc, "validation_sample_type", "t2v") or "t2v"
+    if mode == "i2v":
+        raw = _resolve_i2v_validation_image_path(vc)
+        if not raw:
+            raise ValueError("validation_sample_type is 'i2v' but set validation_image_path or validation_images[0]")
+        pipeline_args["image"] = _load_i2v_validation_image(raw, vc.validation_height, vc.validation_width)
+        pipeline_args["image_noise_sigma_min"] = getattr(vc, "validation_image_noise_sigma_min", 0.111)
+        pipeline_args["image_noise_sigma_max"] = getattr(vc, "validation_image_noise_sigma_max", 0.135)
+
+
+def lora_target_modules_plan_early_attn1(num_blocks: int) -> list[str]:
+    """PEFT `target_modules` name fragments: `blocks[0..B-1].attn1` only (to_q, to_k, to_v, to_out.0)."""
+    if num_blocks < 1:
+        raise ValueError("lora_early_attn1_blocks must be >= 1")
+    if num_blocks > 40:
+        raise ValueError("lora_early_attn1_blocks must be <= 40 (Helios transformer depth)")
+    return [f"blocks.{i}.attn1.{leaf}" for i in range(num_blocks) for leaf in ("to_q", "to_k", "to_v", "to_out.0")]
 
 
 def main(args):
@@ -127,6 +174,9 @@ def main(args):
             BucketedSampler,
             collate_fn,
         )
+
+    if args.training_config.use_ema:
+        from helios.utils.create_ema_zero3_lora import create_ema_final, gather_zero3ema
 
     if torch.backends.mps.is_available() and args.training_config.mixed_precision == "bf16":
         # due to pytorch#99272, MPS does not yet support bfloat16.
@@ -262,6 +312,17 @@ def main(args):
         if args.training_config.is_train_dmd:
             noise_scheduler.config.flow_shift = args.training_config.dmd_timestep_shift
 
+    # `noise_scheduler` is for training; `infer_helios` I2V/T2V load `subfolder=scheduler` (HeliosScheduler).
+    # Building `HeliosPipeline` for validation with UniPC breaks sampling—pass the official scheduler.
+    if args.training_config.is_enable_stage2:
+        pipe_validation_scheduler = noise_scheduler
+    else:
+        pipe_validation_scheduler = HeliosScheduler.from_pretrained(
+            args.model_config.pretrained_model_name_or_path,
+            subfolder="scheduler",
+            revision=args.model_config.revision,
+        )
+
     if args.training_config.is_train_dmd:
         if args.training_config.is_enable_stage2:
             critic_noise_scheduler = HeliosScheduler(
@@ -359,7 +420,15 @@ def main(args):
     if args.training_config.is_train_dmd:
         real_score_model.requires_grad_(False)
 
-    if args.model_config.lora_layers is not None:
+    n_plan = getattr(args.model_config, "lora_early_attn1_blocks", 0) or 0
+    if n_plan > 0:
+        target_modules = lora_target_modules_plan_early_attn1(n_plan)
+        if accelerator.is_main_process:
+            logger.info(
+                "LoRA scope: plan (early blocks, attn1 self-attn only) "
+                f"lora_early_attn1_blocks={n_plan} n_targets={len(target_modules)}"
+            )
+    elif args.model_config.lora_layers is not None:
         if args.model_config.lora_layers != "all-linear":
             target_modules = [layer.strip() for layer in args.model_config.lora_layers.split(",")]
             # add the input layer to the mix.
@@ -780,6 +849,7 @@ def main(args):
             "is_keep_x0": True,
             "force_rebuild": args.data_config.force_rebuild,
             "seed": args.seed,
+            "min_num_frame": args.data_config.min_num_frame,
         }
     else:
         raise NotImplementedError
@@ -912,9 +982,15 @@ def main(args):
     if accelerator.is_main_process:
         tracker_name = args.report_to.tracker_name or "wanvideo-train"
         wandb_name = args.report_to.wandb_name or "custom-wandb-run-name"
+        conf_container = OmegaConf.to_container(args, resolve=True)
+        # TensorBoard add_hparams only allows int/float/str/bool/tensor; nested dicts/lists crash.
+        if args.report_to.report_to == "tensorboard":
+            tracker_config = {"full_config_json": json.dumps(conf_container, default=str)}
+        else:
+            tracker_config = conf_container
         accelerator.init_trackers(
             tracker_name,
-            config=OmegaConf.to_container(args, resolve=True),
+            config=tracker_config,
             init_kwargs={"wandb": {"name": wandb_name}},
         )
 
@@ -958,9 +1034,14 @@ def main(args):
             else:
                 path = os.path.join(args.output_dir, resume_path)
         else:
-            # Get the mos recent checkpoint
+            # Most recent *full* accelerate checkpoint. Skip `checkpoint-{step}-final`: those
+            # are LoRA / extras only (no distributed_checkpoint metadata for dcp.load).
             dirs = os.listdir(args.output_dir)
-            dirs = [d for d in dirs if d.startswith("checkpoint")]
+            dirs = [
+                d
+                for d in dirs
+                if d.startswith("checkpoint") and not d.endswith("-final")
+            ]
             dirs = sorted(dirs, key=lambda x: int(x.split("-")[1]))
             path = os.path.join(args.output_dir, dirs[-1]) if len(dirs) > 0 else None
 
@@ -2149,7 +2230,7 @@ def main(args):
                                 transformer=unwrap_model(transformer),
                                 tokenizer=tokenizer,
                                 text_encoder=text_encoder,
-                                scheduler=noise_scheduler,
+                                scheduler=pipe_validation_scheduler,
                                 revision=args.model_config.revision,
                                 variant=args.model_config.variant,
                                 torch_dtype=weight_dtype,
@@ -2183,6 +2264,8 @@ def main(args):
                                     "use_dmd": args.training_config.is_train_dmd,
                                     "is_amplify_first_chunk": args.training_config.is_amplify_first_chunk,
                                 }
+
+                                _apply_validation_sample_mode_to_pipe_kwargs(args, pipeline_args)
 
                                 videos, prompt = log_validation(
                                     pipe=pipe,
@@ -2362,7 +2445,7 @@ def main(args):
                     transformer=unwrap_model(transformer),
                     tokenizer=tokenizer,
                     text_encoder=text_encoder,
-                    scheduler=noise_scheduler,
+                    scheduler=pipe_validation_scheduler,
                     revision=args.model_config.revision,
                     variant=args.model_config.variant,
                     torch_dtype=weight_dtype,
@@ -2396,6 +2479,8 @@ def main(args):
                         "use_dmd": args.training_config.is_train_dmd,
                         "is_amplify_first_chunk": args.training_config.is_amplify_first_chunk,
                     }
+                    _apply_validation_sample_mode_to_pipe_kwargs(args, pipeline_args)
+
                     videos, prompt = log_validation(
                         pipe=pipe,
                         args=args,
@@ -2431,8 +2516,13 @@ def log_validation(
     accelerator,
     pipeline_args,
 ):
+    mode = getattr(args.validation_config, "validation_sample_type", "t2v") or "t2v"
+    img_note = ""
+    if mode == "i2v":
+        ip = _resolve_i2v_validation_image_path(args.validation_config)
+        img_note = f" I2V image: {ip!r}."
     logger.info(
-        f"Running validation... \n Generating {args.validation_config.num_validation_videos} videos with prompt: {pipeline_args['prompt']}."
+        f"Running validation ({mode})... \n Generating {args.validation_config.num_validation_videos} video(s) with prompt: {pipeline_args['prompt']}.{img_note}"
     )
 
     pipe = pipe.to(accelerator.device)
@@ -2472,6 +2562,13 @@ if __name__ == "__main__":
         and len(conf.validation_config.validation_stream_chunk_size) == 1
     ), "Only a single value is currently supported for validation_latent_window_size and validation_stream_chunk_size"
 
+    if getattr(conf.validation_config, "validation_sample_type", "t2v") == "i2v":
+        has_img = bool(
+            getattr(conf.validation_config, "validation_image_path", None)
+            or (conf.validation_config.validation_images and len(conf.validation_config.validation_images) > 0)
+        )
+        assert has_img, "validation_sample_type=i2v requires validation_image_path and/or validation_images[0]"
+
     assert not (conf.data_config.use_stage1_dataset and conf.training_config.offload), (
         "use_stage1_dataset and offload cannot both be True"
     )
@@ -2479,6 +2576,14 @@ if __name__ == "__main__":
     assert not (conf.data_config.use_stage1_dataset and conf.training_config.offload), (
         "use_stage1_dataset and offload cannot both be True"
     )
+
+    n_plan = getattr(conf.model_config, "lora_early_attn1_blocks", 0) or 0
+    if n_plan > 0:
+        assert conf.model_config.lora_layers is None, "Set lora_layers: null when lora_early_attn1_blocks is set"
+        assert len(conf.model_config.lora_target_modules) == 0, (
+            "lora_target_modules must be empty when lora_early_attn1_blocks is set"
+        )
+        assert 1 <= n_plan <= 40, f"lora_early_attn1_blocks must be in [1,40], got {n_plan}"
 
     if conf.model_config.lora_layers is not None:
         assert len(conf.model_config.lora_target_modules) == 0, (

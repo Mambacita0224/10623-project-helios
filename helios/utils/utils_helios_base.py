@@ -14,6 +14,21 @@ from .utils_recycle_batch import apply_error_injection, process_and_update_error
 logger = get_logger(__name__)
 
 
+def per_latent_time_weight_5d(
+    like_tensor: torch.Tensor,
+    weight_start: float,
+    weight_end: float,
+) -> torch.Tensor:
+    """[B,C,T,H,W] reference → [1,1,T,1,1] multipliers; first latent time highest; mean=1 over T."""
+    t = like_tensor.shape[2]
+    if t <= 1:
+        return torch.ones(1, 1, 1, 1, 1, device=like_tensor.device, dtype=like_tensor.dtype)
+    idx = torch.arange(t, device=like_tensor.device, dtype=torch.float32)
+    w = weight_end + (weight_start - weight_end) * (1.0 - idx / (t - 1))
+    w = w / w.mean()
+    return w.view(1, 1, t, 1, 1).to(dtype=like_tensor.dtype)
+
+
 # ======================================== flow loss ========================================
 
 
@@ -67,12 +82,15 @@ def _flow_loss(
                 cur_weighting = compute_loss_weighting_for_sd3(
                     weighting_scheme=args.training_config.weighting_scheme, sigmas=cur_sigmas
                 )
-                loss = torch.mean(
-                    (cur_weighting.float() * (cur_model_pred.float() - cur_target.float()) ** 2).reshape(
-                        cur_target.shape[0], -1
-                    ),
-                    1,
-                ).mean()
+                per_elem = cur_weighting.float() * (cur_model_pred.float() - cur_target.float()) ** 2
+                if args.training_config.use_early_latent_time_loss_weight and cur_target.ndim == 5:
+                    lt = per_latent_time_weight_5d(
+                        cur_target,
+                        args.training_config.early_latent_time_weight_start,
+                        args.training_config.early_latent_time_weight_end,
+                    )
+                    per_elem = per_elem * lt
+                loss = torch.mean(per_elem.reshape(cur_target.shape[0], -1), 1).mean()
                 loss_list.append(loss)
             loss = torch.stack(loss_list, dim=0).mean()
             del loss_list
@@ -83,10 +101,16 @@ def _flow_loss(
                 weighting_scheme=args.training_config.weighting_scheme, sigmas=sigmas
             )
 
-            loss = torch.mean(
-                (weighting.float() * (model_pred.float() - target.float()) ** 2).reshape(target.shape[0], -1),
-                1,
-            ).mean()
+            per_elem = weighting.float() * (model_pred.float() - target.float()) ** 2
+            if args.training_config.use_early_latent_time_loss_weight and target.ndim == 5:
+                lt = per_latent_time_weight_5d(
+                    target,
+                    args.training_config.early_latent_time_weight_start,
+                    args.training_config.early_latent_time_weight_end,
+                )
+                per_elem = per_elem * lt
+
+            loss = torch.mean(per_elem.reshape(target.shape[0], -1), 1).mean()
 
         # loss = loss * (batch_size / total_sample_count)
         assert loss.requires_grad, f"Loss should have gradient! Got {loss.requires_grad}"

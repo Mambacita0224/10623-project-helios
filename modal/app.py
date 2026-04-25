@@ -66,6 +66,10 @@ image = (
         "loguru",
         "packaging",
         "ninja",
+        # train_helios.py uses StatefulDataLoader (torchdata); not part of the base torch wheel.
+        "torchdata",
+        "tensorboard",  # optional; some configs use report_to: tensorboard
+        "wandb==0.23.0",  # mixkit_lora_modal.yaml uses report_to: wandb + Modal secret `wandb`
     )
     # Mount the repo so infer_helios.py / helios/ / scripts/ are importable at /root/helios
     .add_local_dir(str(REPO_ROOT), remote_path="/root/helios", ignore=[
@@ -84,8 +88,17 @@ image = (
 
 # Persistent volume that caches Helios checkpoints across runs.
 models_volume = modal.Volume.from_name("helios-models", create_if_missing=True)
+# Mixkit curated manifest + clips (from tools/prepare_mixkit.py on app `helios-mixkit-prep`).
+MIXKIT_MOUNT = "/vol"
+mixkit_volume = modal.Volume.from_name("helios-mixkit", create_if_missing=True)
 
 app = modal.App(APP_NAME, image=image)
+
+# Training: keep in sync — request N GPUs here and pass the same N to accelerate.
+# Examples: "A100-80GB" (1 GPU), "A100-80GB:2" (2× DDP), "H100:2" (faster, if available).
+_TRAIN_GPU = "A100-80GB:4"
+_TRAIN_NUM_PROCESSES = 4
+_TRAIN_CONFIG = "scripts/training/configs/mixkit_lora_modal.yaml"
 
 
 # ---------------------------------------------------------------------------
@@ -111,6 +124,56 @@ def _ensure_model_downloaded(repo_id: str = MODEL_NAME) -> str:
     # Persist volume changes
     models_volume.commit()
     return local_dir
+
+
+# ---------------------------------------------------------------------------
+# Mixkit → stage-1 latent export (VAE + text encoder, writes .pt on volume)
+# ---------------------------------------------------------------------------
+@app.function(
+    gpu="A100-80GB",
+    timeout=60 * 60 * 6,
+    volumes={MODEL_DIR: models_volume, MIXKIT_MOUNT: mixkit_volume},
+    secrets=[modal.Secret.from_name("huggingface-secret")],
+)
+def _export_mixkit_latents_remote(
+    jsonl: str = "/vol/mixkit_curated/manifest.jsonl",
+    video_root: str = "/vol/mixkit_curated",
+    out_dir: str = "/vol/mixkit_curated/latents_pt",
+    model_repo: str = MODEL_NAME,
+    max_frames: int = 49,
+    skip_existing: bool = True,
+) -> str:
+    """VAE+UMT5 encode Mixkit clips from jsonl; write .pt for stage-1 / train_helios.
+
+    Set ``data_config.min_num_frame`` to the same as ``max_frames`` (e.g. 49) and
+    ``instance_data_root: [\"<out_dir>\"]`` with ``use_stage1_dataset: true``.
+    """
+    import subprocess
+    import sys
+
+    local_model_dir = _ensure_model_downloaded(model_repo)
+    os.makedirs(out_dir, exist_ok=True)
+    os.chdir("/root/helios")
+    cmd = [
+        sys.executable,
+        "tools/mixkit_export_latents.py",
+        "--jsonl",
+        jsonl,
+        "--video_root",
+        video_root,
+        "--out_dir",
+        out_dir,
+        "--pretrained_model_name_or_path",
+        local_model_dir,
+        "--max_frames",
+        str(max_frames),
+    ]
+    if skip_existing:
+        cmd.append("--skip_existing")
+    print(">>>", " ".join(cmd), flush=True)
+    subprocess.run(cmd, check=True)
+    mixkit_volume.commit()
+    return f"ok: {out_dir}"
 
 
 # ---------------------------------------------------------------------------
@@ -160,8 +223,148 @@ def _run_infer(cli_args: list[str], model_repo: str = MODEL_NAME) -> bytes:
 
 
 # ---------------------------------------------------------------------------
+# Mixkit LoRA training (Accelerate DDP, checkpoints on `helios-mixkit` volume)
+# ---------------------------------------------------------------------------
+@app.function(
+    gpu=_TRAIN_GPU,
+    timeout=60 * 60 * 12,
+    cpu=8,
+    volumes={MODEL_DIR: models_volume, MIXKIT_MOUNT: mixkit_volume},
+    secrets=[
+        modal.Secret.from_name("huggingface-secret"),
+        # Create once: `modal secret create wandb WANDB_API_KEY=...` (see modal/README.md)
+        modal.Secret.from_name("wandb"),
+    ],
+)
+def _train_mixkit_lora_remote(
+    num_processes: int = _TRAIN_NUM_PROCESSES,
+    config_rel: str = _TRAIN_CONFIG,
+) -> str:
+    """Run ``train_helios.py`` with ``mixkit_lora_modal.yaml``; logs and checkpoints under ``/vol/mixkit_curated/train_lora``."""
+    import subprocess
+    import sys
+
+    _ensure_model_downloaded(MODEL_NAME)
+    os.makedirs("/vol/mixkit_curated", exist_ok=True)
+    os.chdir("/root/helios")
+    if not os.path.isabs(config_rel):
+        cfg = os.path.join("/root/helios", config_rel)
+    else:
+        cfg = config_rel
+    if not os.path.isfile(cfg):
+        raise FileNotFoundError(f"config not found: {cfg}")
+    if num_processes < 1:
+        raise ValueError("num_processes must be >= 1")
+    print(
+        f">>> train_helios num_processes={num_processes} config={cfg}",
+        flush=True,
+    )
+    cmd = [
+        "accelerate",
+        "launch",
+        "--num_machines",
+        "1",
+        "--machine_rank",
+        "0",
+        "--num_processes",
+        str(num_processes),
+        "--mixed_precision",
+        "bf16",
+    ]
+    if num_processes > 1:
+        cmd.append("--multi_gpu")
+    cmd.extend(["train_helios.py", "--config", cfg])
+    subprocess.run(cmd, check=True, env={**os.environ, "ACCELERATE_LOG_LEVEL": "INFO"})
+    mixkit_volume.commit()
+    return f"ok: see output_dir in {config_rel} (e.g. /vol/mixkit_curated/train_lora)"
+
+
+@app.function(
+    timeout=120,
+    volumes={MIXKIT_MOUNT: mixkit_volume},
+)
+def _remove_mixkit_train_config_json(
+    path: str = "/vol/mixkit_curated/train_lora/config.json",
+) -> str:
+    """Delete stale ``config.json`` so a new YAML (e.g. after latent_window_size change) is accepted.
+
+    ``train_helios`` refuses to start if ``output_dir/config.json`` from an older run disagrees
+    with the current ``--config`` (see ``Configuration mismatch``). Run this once, then
+    ``train_mixkit_lora`` again. Does not delete checkpoints; only remove whole ``train_lora/``
+    if you need a full wipe.
+    """
+    if os.path.isfile(path):
+        os.remove(path)
+        mixkit_volume.commit()
+        return f"removed {path}"
+    return f"skip: {path} not found"
+
+
+# ---------------------------------------------------------------------------
 # Local entrypoints — these are what `modal run` invokes.
 # ---------------------------------------------------------------------------
+@app.local_entrypoint()
+def clear_mixkit_train_stale_config(
+    path: str = "/vol/mixkit_curated/train_lora/config.json",
+):
+    """One-shot: remove old ``config.json`` on the mixkit volume after you change the training YAML.
+
+    Examples:
+
+    - Full run (default): ``modal run modal/app.py::clear_mixkit_train_stale_config``
+    - Smoke (``mixkit_lora_smoke_modal.yaml``): same with
+      ``--path /vol/mixkit_curated/train_lora_smoke/config.json``
+    """
+    print(_remove_mixkit_train_config_json.remote(path=path))
+
+
+@app.local_entrypoint()
+def train_mixkit_lora(
+    num_processes: int = _TRAIN_NUM_PROCESSES,
+    config: str = _TRAIN_CONFIG,
+):
+    """Fine-tune LoRA on precomputed Mixkit latents (DDP on multiple GPUs if ``_TRAIN_GPU`` requests them).
+
+    Requires: ``export_mixkit_latents`` has populated ``/vol/mixkit_curated/latents_pt`` on
+    volume ``helios-mixkit``, and this app mounts the same volume at ``/vol``.
+
+    W&B: create ``modal secret create wandb WANDB_API_KEY=...`` (see ``modal/README.md``).
+
+    **Cost / speed:** edit ``_TRAIN_GPU`` and ``_TRAIN_NUM_PROCESSES`` at the top of ``modal/app.py``
+    so the GPU count matches ``num_processes`` (e.g. ``A100-80GB`` + ``num_processes=1`` for cheaper runs).
+    """
+    msg = _train_mixkit_lora_remote.remote(
+        num_processes=num_processes,
+        config_rel=config,
+    )
+    print(msg)
+
+
+@app.local_entrypoint()
+def export_mixkit_latents(
+    jsonl: str = "/vol/mixkit_curated/manifest.jsonl",
+    video_root: str = "/vol/mixkit_curated",
+    out_dir: str = "/vol/mixkit_curated/latents_pt",
+    model_repo: str = MODEL_NAME,
+    max_frames: int = 49,
+    skip_existing: bool = True,
+):
+    """Offline encode Mixkit clips on GPU; writes Helios stage-1 `.pt` files to the volume.
+
+    Requires prior ``modal run tools/prepare_mixkit.py::build_manifest`` so the
+    manifest and `clips/*.mp4` exist under ``/vol/mixkit_curated`` on ``helios-mixkit``.
+    """
+    msg = _export_mixkit_latents_remote.remote(
+        jsonl=jsonl,
+        video_root=video_root,
+        out_dir=out_dir,
+        model_repo=model_repo,
+        max_frames=max_frames,
+        skip_existing=skip_existing,
+    )
+    print(msg)
+
+
 @app.local_entrypoint()
 def t2v_sanity_check(
     num_frames: int = 99,

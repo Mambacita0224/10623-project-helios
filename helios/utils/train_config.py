@@ -40,6 +40,8 @@ class DataConfig:
     )
     # ---- Stage 1 ----
     use_stage1_dataset: bool = field(default=False)
+    # Min pixel frame count in latent filenames (e.g. 49 for mixkit_curated, 121 for long-video defaults).
+    min_num_frame: int = field(default=121)
     # ---- Stage 3 ----
     use_stage3_dataset: bool = field(default=False)
     gan_data_root: Optional[list] = field(default_factory=list)
@@ -72,6 +74,9 @@ class ModelConfig:
     lora_layers: Optional[str] = field(default=None)
     lora_target_modules: list = field(default_factory=list)
     lora_exclude_modules: list = field(default_factory=list)
+    # If >0, overrides `lora_layers`: train LoRA on self-attn only in `blocks[0..B-1].attn1`
+    # (`to_q`, `to_k`, `to_v`, `to_out.0`); does not match `attn2` (PEFT substring-safe paths).
+    lora_early_attn1_blocks: int = field(default=0)
     # ---- Other ----
     train_norm_layers: bool = field(default=False)
     bnb_quantization_config_path: Optional[str] = field(default=None)
@@ -100,6 +105,15 @@ class ValidationConfig:
     first_step_valid: bool = field(default=True)
     num_validation_videos: int = field(default=1)
     num_inference_steps: int = field(default=30)
+    # t2v: text only. i2v: also pass a first frame (see `validation_image_path` or `validation_images[0]`).
+    validation_sample_type: str = field(
+        default="t2v",
+        metadata={"choices": ["t2v", "i2v"]},
+    )
+    # If set, used for i2v (repo-relative to cwd, e.g. `example/wave.jpg`). Otherwise i2v uses `validation_images[0]`.
+    validation_image_path: Optional[str] = field(default=None)
+    validation_image_noise_sigma_min: float = field(default=0.111)
+    validation_image_noise_sigma_max: float = field(default=0.135)
     # ---- Dynamic Shifting ----
     use_dynamic_shifting: bool = field(default=False)
     time_shift_type: str = field(
@@ -180,6 +194,11 @@ class TrainingConfig:
     logit_mean: float = field(default=0.0)
     logit_std: float = field(default=1.0)
     mode_scale: float = field(default=1.29)
+    # ---- Early latent-time emphasis (midway / research plan): weight flow loss more on
+    # earlier *latent* time indices (first part of the clip in VAE latents, shape [B,C,T,H,W]).
+    use_early_latent_time_loss_weight: bool = field(default=False)
+    early_latent_time_weight_start: float = field(default=2.0)
+    early_latent_time_weight_end: float = field(default=1.0)
     # ---- Dynamic Shifting ----
     use_dynamic_shifting: bool = field(default=False)
     time_shift_type: str = field(

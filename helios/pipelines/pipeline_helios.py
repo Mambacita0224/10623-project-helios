@@ -1321,7 +1321,7 @@ class HeliosPipeline(DiffusionPipeline, WanLoraLoaderMixin):
             )
 
             if not is_enable_stage2:
-                self.scheduler.set_timesteps(num_inference_steps, mu=1, device=device)
+                self.scheduler.set_timesteps(num_inference_steps, 0, device=device)
 
                 if use_dynamic_shifting:
                     sigmas = torch.linspace(

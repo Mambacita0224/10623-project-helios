@@ -22,6 +22,7 @@ class BucketedFeatureDataset(Dataset):
         single_height=384,
         single_width=640,
         seed=42,
+        min_num_frame=121,
     ):
         self.history_sizes = history_sizes
         self.is_keep_x0 = is_keep_x0
@@ -32,6 +33,7 @@ class BucketedFeatureDataset(Dataset):
         self.single_res = single_res
         self.single_height = single_height
         self.single_width = single_width
+        self.min_num_frame = min_num_frame
         assert self.is_keep_x0, "is_keep_x0 need to be True now!"
 
         self.base_seed = seed
@@ -96,8 +98,7 @@ class BucketedFeatureDataset(Dataset):
             height = int(parts[-2])
             width = int(parts[-1].replace(".pt", ""))
 
-            # keep length >= 121
-            if num_frame < 121:
+            if num_frame < self.min_num_frame:
                 continue
 
             # keep resolution

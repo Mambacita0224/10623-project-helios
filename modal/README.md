@@ -35,6 +35,28 @@ modal secret create huggingface-secret HF_TOKEN=hf_xxxxxxxx   # use --force to o
 modal volume create helios-models                # caches the ~20 GB Helios-Distilled weights
 ```
 
+### Weights & Biases (Mixkit LoRA training on Modal)
+
+`train_mixkit_lora` uses `scripts/training/configs/mixkit_lora_modal.yaml` with `report_to: wandb`. Create a **Modal** secret (name must match `modal/app.py`: `wandb`) so the container receives `WANDB_API_KEY`. Do **not** commit API keys; paste the value only in the shell command.
+
+```bash
+# One-time. Optional: add WANDB_ENTITY=your-team WANDB_PROJECT=helios-mixkit
+modal secret create wandb WANDB_API_KEY=xxxxxxxxxxxxxxxx
+
+# If the secret name already exists and you need to replace it:
+modal secret create wandb WANDB_API_KEY=xxxxxxxxxxxxxxxx --force
+```
+
+If a key is ever exposed (chat, screen share), revoke it in the [W&B user settings](https://wandb.ai/settings) and create a new one, then re-run `modal secret create` with `--force`.
+
+**Mixkit LoRA (poster) scope** — `scripts/training/configs/mixkit_lora_modal.yaml` uses `lora_early_attn1_blocks` (attn1-only, early blocks), `use_early_latent_time_loss_weight`, and rank 16. After you change PEFT/loss fields, clear stale `output_dir/config.json` on the volume: `modal run modal/app.py::clear_mixkit_train_stale_config` (or use a separate `output_dir` like the smoke file below).
+
+**Quick smoke (100 steps, plan-aligned, separate W&B + checkpoint dir):**
+
+`modal run modal/app.py::train_mixkit_lora --config scripts/training/configs/mixkit_lora_smoke_modal.yaml`
+
+Validation during training is **I2V** by default in `mixkit_lora*_modal.yaml` (`validation_sample_type: i2v`, `example/wave.jpg`). Put other stills under a path in the repo and point `validation_image_path` at them, or set `validation_sample_type: t2v` for text-only. `train_helios` now builds the validation `HeliosPipeline` with the checkpoint’s **`subfolder=scheduler`** (HeliosScheduler), same as `infer_helios`—**not** the UniPC scheduler used for flow training—so I2V validation should match a normal local inference run.
+
 `download_source` in `tools/prepare_mixkit.py` also mounts this secret so large HuggingFace
 dataset pulls are less likely to hit **HTTP 429** (see main README / Mixkit section below).
 
