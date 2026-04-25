@@ -394,10 +394,15 @@ def i2v(
     image_path: str,
     prompt: str,
     num_frames: int = 99,
-    guidance_scale: float = 1.0,
+    guidance_scale: float = 5.0,
+    num_inference_steps: int = 50,
+    num_latent_frames_per_chunk: int = 13,
     image_noise_sigma_min: float = 0.111,
     image_noise_sigma_max: float = 0.135,
+    use_stage2: bool = False,
     is_skip_first_chunk: bool = False,
+    lora_path: str = "",
+    partial_path: str = "",
     output_path: str = "outputs/i2v.mp4",
 ):
     """Run Helios-Distilled I2V on a single image+prompt pair.
@@ -411,16 +416,25 @@ def i2v(
         "--image_path", image_path,
         "--prompt", prompt,
         "--num_frames", str(num_frames),
+        "--num_inference_steps", str(num_inference_steps),
         "--fps", "24",
         "--guidance_scale", str(guidance_scale),
+        "--num_latent_frames_per_chunk", str(num_latent_frames_per_chunk),
         "--image_noise_sigma_min", str(image_noise_sigma_min),
         "--image_noise_sigma_max", str(image_noise_sigma_max),
-        "--is_enable_stage2",
-        "--pyramid_num_inference_steps_list", "2", "2", "2",
-        "--is_amplify_first_chunk",
     ]
+    if use_stage2:
+        args.extend([
+            "--is_enable_stage2",
+            "--pyramid_num_inference_steps_list", "2", "2", "2",
+            "--is_amplify_first_chunk",
+        ])
     if is_skip_first_chunk:
         args.append("--is_skip_first_chunk")
+    if lora_path:
+        args.extend(["--lora_path", lora_path])
+    if partial_path:
+        args.extend(["--partial_path", partial_path])
     mp4_bytes = _run_infer.remote(args)
     _save_bytes(mp4_bytes, output_path)
 

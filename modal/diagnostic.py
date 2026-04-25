@@ -1,20 +1,31 @@
 """Modal entrypoint: run the 25-prompt diagnostic on Helios-Distilled.
 
-Three conditions per prompt:
+**Suite:** ``data/diagnostic/prompts.jsonl`` (25 lines) + ``data/diagnostic/images/{id}.png`` per
+``modal/prepare_images.py``. Baseline conditions per prompt:
 
-    1. ``t2v``      — text-to-video (no image history).
-    2. ``i2v``      — image-to-video, zero-shot.
-    3. ``i2v_amp``  — I2V with ``--is_amplify_first_chunk``.
+    1. ``t2v``         — text-to-video (no image history).
+    2. ``i2v``         — image-to-video, zero-shot.
+    3. ``i2v_amp``     — I2V with ``--is_amplify_first_chunk``.
 
-(2) and (3) feed the SDXL-Turbo-generated image at
-``data/diagnostic/images/{id}.png`` (see ``modal/prepare_images.py``).
-Outputs land under ``outputs/diagnostic/{condition}/{id}.mp4``.
+Optional **Mixkit LoRA** (mount ``helios-mixkit`` at ``/vol``):
+
+    4. ``i2v_lora``     — I2V + ``--lora_path`` (same as ``i2v`` but finetuned adapter).
+    5. ``i2v_amp_lora`` — I2V + amplify + LoRA.
+
+Outputs: ``outputs/diagnostic/{condition}/{id}.mp4`` on the **local** repo (after Modal returns bytes).
+
+**EP / figure (CPU, no GPU):** from repo root, after MP4s exist:
+
+    python eval/compute_emr_ttfm.py --conditions t2v=outputs/diagnostic/t2v ... --output ... --figure ...
 
 Usage:
 
     modal run modal/prepare_images.py::generate_all      # first-frame images
-    modal run modal/diagnostic.py::run_all               # full 75-run suite
+    modal run modal/diagnostic.py::run_all               # default 75 runs (3×25)
     modal run modal/diagnostic.py::run_all --limit 1     # smoke test
+
+    modal run modal/diagnostic.py::run_all --conditions i2v_lora,i2v_amp_lora \\
+        --lora-path /vol/mixkit_curated/train_lora/checkpoint-2000-final/pytorch_lora_weights.safetensors
 """
 
 from __future__ import annotations
@@ -85,6 +96,8 @@ image = (
 )
 
 models_volume = modal.Volume.from_name("helios-models", create_if_missing=True)
+MIXKIT_MOUNT = "/vol"
+mixkit_volume = modal.Volume.from_name("helios-mixkit", create_if_missing=True)
 app = modal.App(APP_NAME, image=image)
 
 
@@ -112,7 +125,7 @@ def _ensure_model_downloaded(repo_id: str = MODEL_NAME) -> str:
 @app.function(
     gpu="A100-80GB",
     timeout=60 * 30,
-    volumes={MODEL_DIR: models_volume},
+    volumes={MODEL_DIR: models_volume, MIXKIT_MOUNT: mixkit_volume},
     secrets=[modal.Secret.from_name("huggingface-secret")],
     max_containers=8,  # fan-out cap for .starmap (workspace A100 quota = 10)
 )
@@ -123,8 +136,18 @@ def run_one(
     image_b64: Optional[str],
     num_frames: int,
     guidance_scale: float,
+    lora_path: Optional[str] = None,
+    inference_profile: str = "emr",
 ) -> dict:
     """Run Helios inference under one condition.
+
+    ``inference_profile``:
+    - ``emr`` — default 25-suite recipe from docs/metrics: stage-2 pyramid (``2,2,2``) + low CFG
+      (``guidance_scale`` from ``run_all``, default 1.0). **Not** the same as Mixkit PEFT training
+      validation in ``train_helios`` / ``mixkit_lora_modal.yaml``.
+    - ``mixkit`` — **matches** that validation: no stage-2, ``num_inference_steps=50``,
+      ``guidance_scale=5``, ``num_latent_frames_per_chunk=13`` (as in
+      ``validation_config`` / ``log_validation``). Use this to judge LoRA quality fairly.
 
     Returns {"condition", "clip_id", "mp4_bytes"} so the caller can route the
     result to the correct output path regardless of completion order.
@@ -138,19 +161,44 @@ def run_one(
     out_dir = "/tmp/helios_out"
     pathlib.Path(out_dir).mkdir(parents=True, exist_ok=True)
 
-    args = [
-        "--base_model_path", local_model_dir,
-        "--transformer_path", local_model_dir,
-        "--prompt", prompt,
-        "--num_frames", str(num_frames),
-        "--guidance_scale", str(guidance_scale),
-        "--is_enable_stage2",
-        "--pyramid_num_inference_steps_list", "2", "2", "2",
-        "--output_folder", out_dir,
-    ]
+    if inference_profile == "emr":
+        # Paper / EMR figure baseline (high motion contrast t2v vs i2v under light denoising).
+        args = [
+            "--base_model_path", local_model_dir,
+            "--transformer_path", local_model_dir,
+            "--prompt", prompt,
+            "--num_frames", str(num_frames),
+            "--guidance_scale", str(guidance_scale),
+            "--is_enable_stage2",
+            "--pyramid_num_inference_steps_list", "2", "2", "2",
+            "--output_folder", out_dir,
+        ]
+    elif inference_profile == "mixkit":
+        # Aligned with mixkit_lora_modal validation: stage-1 only, 50 steps, CFG 5, latent 13.
+        g = 5.0
+        args = [
+            "--base_model_path", local_model_dir,
+            "--transformer_path", local_model_dir,
+            "--prompt", prompt,
+            "--num_frames", str(num_frames),
+            "--num_inference_steps", "50",
+            "--guidance_scale", str(g),
+            "--num_latent_frames_per_chunk", "13",
+            "--output_folder", out_dir,
+        ]
+    else:
+        raise ValueError(
+            f"inference_profile must be 'emr' or 'mixkit', got {inference_profile!r}"
+        )
+    if lora_path:
+        if not pathlib.Path(lora_path).is_file():
+            raise FileNotFoundError(
+                f"LoRA not found: {lora_path} (train first or check mixkit volume path)"
+            )
+        args = ["--lora_path", lora_path, *args]
     if condition == "t2v":
         args = ["--sample_type", "t2v", *args]
-    elif condition in ("i2v", "i2v_amp"):
+    elif condition in ("i2v", "i2v_amp", "i2v_lora", "i2v_amp_lora"):
         if not image_b64:
             raise RuntimeError(f"condition {condition} requires an input image")
         image_path = "/tmp/helios_input.png"
@@ -164,8 +212,10 @@ def run_one(
             "--image_noise_sigma_max", "0.135",
             *args,
         ]
-        if condition == "i2v_amp":
+        if condition in ("i2v_amp", "i2v_amp_lora"):
             args.append("--is_amplify_first_chunk")
+        if condition in ("i2v_lora", "i2v_amp_lora") and not lora_path:
+            raise ValueError(f"condition {condition} requires --lora-path in run_all")
     else:
         raise ValueError(f"unknown condition: {condition}")
 
@@ -197,12 +247,17 @@ def run_all(
     guidance_scale: float = 1.0,
     overwrite: bool = False,
     limit: int = 0,
+    lora_path: str = "",
+    inference_profile: str = "emr",
 ):
     """Run the diagnostic on every prompt x every requested condition.
 
     ``num_frames=99`` matches Helios's example config and keeps the EMR
     "late" window (frames 25..98) large enough to be a stable reference.
     Use ``--limit N`` to smoke-test before committing to the full suite.
+
+    For **Mixkit LoRA** evaluation, use ``--inference-profile mixkit`` so inference matches
+    ``train_helios`` / ``mixkit_lora_modal.yaml`` validation (NOT the low-CFG stage-2 EMR default).
     """
     prompts_path = REPO_ROOT / "data" / "diagnostic" / "prompts.jsonl"
     images_dir = REPO_ROOT / "data" / "diagnostic" / "images"
@@ -213,27 +268,46 @@ def run_all(
         entries = entries[:limit]
 
     cond_list = [c.strip() for c in conditions.split(",") if c.strip()]
+    _valid = {"t2v", "i2v", "i2v_amp", "i2v_lora", "i2v_amp_lora"}
     for c in cond_list:
-        if c not in {"t2v", "i2v", "i2v_amp"}:
-            raise SystemExit(f"unknown condition: {c!r}")
-        (out_root / c).mkdir(parents=True, exist_ok=True)
+        if c not in _valid:
+            raise SystemExit(f"unknown condition: {c!r} (valid: {sorted(_valid)})")
+        if inference_profile == "mixkit":
+            (out_root / "mixkit" / c).mkdir(parents=True, exist_ok=True)
+        else:
+            (out_root / c).mkdir(parents=True, exist_ok=True)
+    needs_lora = bool(set(cond_list) & {"i2v_lora", "i2v_amp_lora"})
+    lora_p = lora_path.strip() if lora_path else ""
+    if needs_lora and not lora_p:
+        raise SystemExit(
+            "conditions i2v_lora / i2v_amp_lora require --lora-path "
+            "(e.g. /vol/mixkit_curated/train_lora/checkpoint-2000-final/pytorch_lora_weights.safetensors)"
+        )
+    lora_resolved: Optional[str] = lora_p if lora_p else None
+    if inference_profile not in ("emr", "mixkit"):
+        raise SystemExit("inference_profile must be 'emr' or 'mixkit'")
 
     inputs = []
     for e in entries:
         for c in cond_list:
-            out = out_root / c / f"{e['id']}.mp4"
+            rel = pathlib.Path("mixkit", c) if inference_profile == "mixkit" else pathlib.Path(c)
+            out = out_root / rel / f"{e['id']}.mp4"
             if out.exists() and not overwrite:
                 print(f"[skip] {c}/{e['id']}.mp4 already exists")
                 continue
             image_b64 = None
-            if c in ("i2v", "i2v_amp"):
+            if c in ("i2v", "i2v_amp", "i2v_lora", "i2v_amp_lora"):
                 ip = images_dir / f"{e['id']}.png"
                 if not ip.exists():
                     raise SystemExit(
                         f"missing image for {e['id']}; run modal/prepare_images.py first"
                     )
                 image_b64 = base64.b64encode(ip.read_bytes()).decode("ascii")
-            inputs.append((c, e["id"], e["prompt"], image_b64, num_frames, guidance_scale))
+            use_lora = c in ("i2v_lora", "i2v_amp_lora")
+            lp = lora_resolved if use_lora else None
+            inputs.append(
+                (c, e["id"], e["prompt"], image_b64, num_frames, guidance_scale, lp, inference_profile)
+            )
 
     if not inputs:
         print("nothing to do; pass --overwrite to regenerate")
@@ -250,13 +324,14 @@ def run_all(
         cond = result["condition"]
         clip_id = result["clip_id"]
         mp4_bytes = result["mp4_bytes"]
-        out = out_root / cond / f"{clip_id}.mp4"
+        rel = pathlib.Path("mixkit", cond) if inference_profile == "mixkit" else pathlib.Path(cond)
+        out = out_root / rel / f"{clip_id}.mp4"
         out.parent.mkdir(parents=True, exist_ok=True)
         out.write_bytes(mp4_bytes)
         completed += 1
         elapsed = _time.time() - start
         print(
-            f"[{completed}/{len(inputs)}] {cond}/{clip_id}.mp4  "
+            f"[{completed}/{len(inputs)}] {rel}/{clip_id}.mp4  "
             f"({len(mp4_bytes) / 1e6:.1f} MB)  elapsed {elapsed:.0f}s"
         )
 
@@ -264,10 +339,10 @@ def run_all(
     print(f"\ndone; clips saved under {out_root} in {total:.0f}s "
           f"({total / 60:.1f} min)")
     print(
-        "\nnext: compute metrics:\n"
+        "\nnext (CPU, no GPU; needs opencv + matplotlib in venv):\n"
         "    python eval/compute_emr_ttfm.py \\\n"
         "        --conditions t2v=outputs/diagnostic/t2v "
         "i2v=outputs/diagnostic/i2v i2v_amp=outputs/diagnostic/i2v_amp \\\n"
         "        --output outputs/diagnostic/emr_ttfm_results.json \\\n"
-        "        --figure outputs/diagnostic/early_motion_figure.png"
+        "        --figure outputs/diagnostic/early_motion_figure.png --fps 24"
     )

@@ -51,7 +51,8 @@ model_config:
   lora_layers: null
   lora_target_modules: []
   lora_exclude_modules: []
-  lora_early_attn1_blocks: 5
+  # Wider early self-attn LoRA scope improves motion onset sensitivity for i2v.
+  lora_early_attn1_blocks: 8
   train_norm_layers: false
 
 validation_config:
@@ -104,7 +105,7 @@ training_config:
   mode_scale: 1.29
   # Plan §2: emphasize earlier *latent* time (first part of the clip) in the flow MSE.
   use_early_latent_time_loss_weight: true
-  early_latent_time_weight_start: 2.0
+  early_latent_time_weight_start: 2.5
   early_latent_time_weight_end: 1.0
   use_dynamic_shifting: false
   time_shift_type: "exponential"
@@ -128,8 +129,13 @@ training_config:
   latent_window_size:
     - 13
   is_random_drop: true
-  random_drop_v2v_ratio: 0.4
-  random_drop_t2v_ratio: 0.4
+  # I2V-focused curriculum:
+  # - high i2v ratio keeps first frame as anchor (history mostly dropped)
+  # - low v2v keeps some temporal robustness
+  # - zero t2v avoids diluting i2v warm-start learning
+  random_drop_i2v_ratio: 0.7
+  random_drop_v2v_ratio: 0.1
+  random_drop_t2v_ratio: 0.0
   corrupt_model_input: false
   corrupt_mode_model_input: "noise"
   corrupt_mode_prob_model_input: 0.9

@@ -49,14 +49,16 @@ model_config:
   lora_layers: null
   lora_target_modules: []
   lora_exclude_modules: []
-  lora_early_attn1_blocks: 5
+  # Keep smoke aligned with full run so behavior is predictive.
+  lora_early_attn1_blocks: 8
   train_norm_layers: false
 
 validation_config:
   validation_sample_type: i2v
   validation_image_path: example/wave.jpg
-  validation_steps: 1000
-  first_step_valid: false
+  # Smoke needs both pre-train (step 0) and post-train checks.
+  validation_steps: 100
+  first_step_valid: true
   validation_height: 384
   validation_width: 640
   validation_max_num_frames: 99
@@ -99,7 +101,7 @@ training_config:
   logit_std: 1.0
   mode_scale: 1.29
   use_early_latent_time_loss_weight: true
-  early_latent_time_weight_start: 2.0
+  early_latent_time_weight_start: 2.5
   early_latent_time_weight_end: 1.0
   use_dynamic_shifting: false
   time_shift_type: "exponential"
@@ -122,8 +124,9 @@ training_config:
   latent_window_size:
     - 13
   is_random_drop: true
-  random_drop_v2v_ratio: 0.4
-  random_drop_t2v_ratio: 0.4
+  random_drop_i2v_ratio: 0.7
+  random_drop_v2v_ratio: 0.1
+  random_drop_t2v_ratio: 0.0
   corrupt_model_input: false
   corrupt_mode_model_input: "noise"
   corrupt_mode_prob_model_input: 0.9

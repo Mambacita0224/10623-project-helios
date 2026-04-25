@@ -106,6 +106,8 @@ def _process_condition(name: str, directory: pathlib.Path) -> Dict:
     emrs = np.array([c["emr"] for c in per_clip], dtype=np.float32)
     ttfms = np.array([c["ttfm"] for c in per_clip], dtype=np.float32)
     amps = np.array([c["mean_flow_all"] for c in per_clip], dtype=np.float32)
+    early_abs = np.array([c["mean_flow_early"] for c in per_clip], dtype=np.float32)
+    late_abs = np.array([c["mean_flow_late"] for c in per_clip], dtype=np.float32)
 
     return {
         "per_clip": per_clip,
@@ -117,6 +119,10 @@ def _process_condition(name: str, directory: pathlib.Path) -> Dict:
             "ttfm_std": float(ttfms.std(ddof=1)) if ttfms.size > 1 else 0.0,
             "motion_amp_mean": float(amps.mean()),
             "motion_amp_std": float(amps.std(ddof=1)) if amps.size > 1 else 0.0,
+            "early_motion_mean": float(early_abs.mean()),
+            "early_motion_std": float(early_abs.std(ddof=1)) if early_abs.size > 1 else 0.0,
+            "late_motion_mean": float(late_abs.mean()),
+            "late_motion_std": float(late_abs.std(ddof=1)) if late_abs.size > 1 else 0.0,
             "mean_per_frame": mean_per_frame,
             "std_per_frame": std_per_frame,
         },
@@ -155,12 +161,24 @@ def _paired_comparisons(conditions: Dict[str, Dict]) -> Dict:
         b_emr = np.array([t2v_clips[i]["emr"] for i in common])
         a_ttfm = np.array([k_clips[i]["ttfm"] for i in common])
         b_ttfm = np.array([t2v_clips[i]["ttfm"] for i in common])
+        a_early = np.array([k_clips[i]["mean_flow_early"] for i in common])
+        b_early = np.array([t2v_clips[i]["mean_flow_early"] for i in common])
+        a_late = np.array([k_clips[i]["mean_flow_late"] for i in common])
+        b_late = np.array([t2v_clips[i]["mean_flow_late"] for i in common])
         m, t, p = _paired_t(a_emr, b_emr)
         m2, t2, p2 = _paired_t(a_ttfm, b_ttfm)
+        m3, t3, p3 = _paired_t(a_early, b_early)
+        m4, t4, p4 = _paired_t(a_late, b_late)
         out[f"{k}_vs_t2v"] = {
             "n": len(common),
             "emr_paired_delta_mean": m, "emr_t_stat": t, "emr_p_value_two_sided": p,
             "ttfm_paired_delta_mean": m2, "ttfm_t_stat": t2, "ttfm_p_value_two_sided": p2,
+            "early_motion_paired_delta_mean": m3,
+            "early_motion_t_stat": t3,
+            "early_motion_p_value_two_sided": p3,
+            "late_motion_paired_delta_mean": m4,
+            "late_motion_t_stat": t4,
+            "late_motion_p_value_two_sided": p4,
         }
     return out
 
@@ -235,10 +253,14 @@ def main():
         print(f"[{name}] n={a['n']}  "
               f"EMR={a['emr_mean']:.3f}±{a['emr_std']:.3f}  "
               f"TTFM={a['ttfm_mean']:.2f}±{a['ttfm_std']:.2f}  "
-              f"MotionAmp={a['motion_amp_mean']:.3f}")
+              f"MotionAmp={a['motion_amp_mean']:.3f}  "
+              f"Early={a['early_motion_mean']:.3f}  "
+              f"Late={a['late_motion_mean']:.3f}")
     for k, v in result["paired"].items():
         print(f"[paired {k}] ΔEMR={v['emr_paired_delta_mean']:+.3f}  "
               f"t={v['emr_t_stat']:+.2f}  p={v['emr_p_value_two_sided']:.4f}")
+        print(f"             ΔEarly={v['early_motion_paired_delta_mean']:+.3f}  "
+              f"t={v['early_motion_t_stat']:+.2f}  p={v['early_motion_p_value_two_sided']:.4f}")
     print(f"\nwrote {args.output}")
     print(f"wrote {args.figure}")
 
