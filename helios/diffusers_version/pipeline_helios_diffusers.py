@@ -538,6 +538,11 @@ class HeliosPipeline(DiffusionPipeline, HeliosLoraLoaderMixin):
         progress_bar=None,
     ):
         batch_size = latents.shape[0]
+        use_dmd = getattr(self.scheduler.config, "scheduler_type", None) == "dmd"
+        # DMD step() requires extra tensors; use the section start latent as the fixed noisy source.
+        dmd_noisy_tensor = latents if use_dmd else None
+        dmd_sigmas = self.scheduler.sigmas if use_dmd else None
+        dmd_timesteps = self.scheduler.timesteps if use_dmd else None
 
         for i, t in enumerate(timesteps):
             if self.interrupt:
@@ -600,7 +605,13 @@ class HeliosPipeline(DiffusionPipeline, HeliosLoraLoaderMixin):
                 noise_pred,
                 t,
                 latents,
+                generator=generator,
                 return_dict=False,
+                cur_sampling_step=i,
+                dmd_noisy_tensor=dmd_noisy_tensor,
+                dmd_sigmas=dmd_sigmas,
+                dmd_timesteps=dmd_timesteps,
+                all_timesteps=timesteps,
             )[0]
 
             if callback_on_step_end is not None:

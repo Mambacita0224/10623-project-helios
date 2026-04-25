@@ -140,7 +140,7 @@ def _export_mixkit_latents_remote(
     video_root: str = "/vol/mixkit_curated",
     out_dir: str = "/vol/mixkit_curated/latents_pt",
     model_repo: str = MODEL_NAME,
-    max_frames: int = 49,
+    max_frames: int = 33,
     skip_existing: bool = True,
 ) -> str:
     """VAE+UMT5 encode Mixkit clips from jsonl; write .pt for stage-1 / train_helios.
@@ -174,6 +174,127 @@ def _export_mixkit_latents_remote(
     subprocess.run(cmd, check=True)
     mixkit_volume.commit()
     return f"ok: {out_dir}"
+
+
+@app.function(
+    timeout=60 * 10,
+    volumes={MIXKIT_MOUNT: mixkit_volume},
+)
+def _audit_mixkit_latents_remote(
+    jsonl: str = "/vol/mixkit_curated/manifest.jsonl",
+    out_dir: str = "/vol/mixkit_curated/latents_pt",
+    sample_limit: int = 20,
+) -> dict:
+    """Audit latent export coverage and payload sanity against the manifest.
+
+    Checks:
+    - expected IDs from manifest vs exported `.pt` IDs in `out_dir`
+    - sampled payload keys (`vae_latent`, `prompt_embed`, `first_frames_image`, `prompt_raw`)
+    - sampled latent tensor shape and first-frame image size consistency with filename suffix
+    """
+    import glob
+    import json
+    import random
+
+    import torch
+
+    if not os.path.isfile(jsonl):
+        raise FileNotFoundError(f"manifest not found: {jsonl}")
+    if not os.path.isdir(out_dir):
+        raise FileNotFoundError(f"latent directory not found: {out_dir}")
+
+    rows: list[dict] = []
+    with open(jsonl, "r", encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if line:
+                rows.append(json.loads(line))
+
+    expected_ids = {str(r.get("id")) for r in rows if r.get("id") is not None}
+    pt_paths = sorted(glob.glob(os.path.join(out_dir, "*.pt")))
+
+    exported_ids = set()
+    bad_name_files = []
+    parsed_meta = {}
+    for p in pt_paths:
+        stem = os.path.basename(p)[:-3]
+        parts = stem.rsplit("_", 3)
+        if len(parts) != 4:
+            bad_name_files.append(os.path.basename(p))
+            continue
+        uttid, t_px, h_px, w_px = parts
+        exported_ids.add(uttid)
+        parsed_meta[p] = {
+            "id": uttid,
+            "t_px": t_px,
+            "h_px": h_px,
+            "w_px": w_px,
+        }
+
+    missing_ids = sorted(expected_ids - exported_ids)
+    extra_ids = sorted(exported_ids - expected_ids)
+
+    key_issues = []
+    shape_issues = []
+    sample_paths = random.sample(pt_paths, min(sample_limit, len(pt_paths))) if pt_paths else []
+    required_keys = {"vae_latent", "prompt_embed", "first_frames_image", "prompt_raw"}
+
+    for p in sample_paths:
+        payload = torch.load(p, map_location="cpu", weights_only=False)
+        basename = os.path.basename(p)
+
+        missing_keys = sorted(required_keys - set(payload.keys()))
+        if missing_keys:
+            key_issues.append({"file": basename, "missing_keys": missing_keys})
+
+        vae_latent = payload.get("vae_latent")
+        if not torch.is_tensor(vae_latent) or vae_latent.ndim != 5:
+            shape_issues.append({
+                "file": basename,
+                "issue": "vae_latent must be a 5D tensor [B,C,T,H,W]",
+                "actual_type": str(type(vae_latent)),
+                "actual_shape": list(vae_latent.shape) if torch.is_tensor(vae_latent) else None,
+            })
+
+        meta = parsed_meta.get(p)
+        first_img = payload.get("first_frames_image")
+        if meta and hasattr(first_img, "size"):
+            try:
+                expect_hw = (int(meta["h_px"]), int(meta["w_px"]))
+                actual_hw = (int(first_img.size[1]), int(first_img.size[0]))
+                if actual_hw != expect_hw:
+                    shape_issues.append({
+                        "file": basename,
+                        "issue": "first_frames_image size mismatches filename suffix",
+                        "expected_hw": list(expect_hw),
+                        "actual_hw": list(actual_hw),
+                    })
+            except Exception:
+                shape_issues.append({
+                    "file": basename,
+                    "issue": "failed to parse first_frames_image or filename resolution suffix",
+                })
+
+    summary = {
+        "manifest_jsonl": jsonl,
+        "latent_dir": out_dir,
+        "expected_manifest_rows": len(rows),
+        "expected_unique_ids": len(expected_ids),
+        "exported_pt_files": len(pt_paths),
+        "exported_unique_ids": len(exported_ids),
+        "missing_id_count": len(missing_ids),
+        "extra_id_count": len(extra_ids),
+        "bad_filename_count": len(bad_name_files),
+        "sampled_files": len(sample_paths),
+        "key_issue_count": len(key_issues),
+        "shape_issue_count": len(shape_issues),
+        "missing_ids_preview": missing_ids[:30],
+        "extra_ids_preview": extra_ids[:30],
+        "bad_filenames_preview": bad_name_files[:30],
+        "key_issues_preview": key_issues[:10],
+        "shape_issues_preview": shape_issues[:10],
+    }
+    return summary
 
 
 # ---------------------------------------------------------------------------
@@ -346,7 +467,7 @@ def export_mixkit_latents(
     video_root: str = "/vol/mixkit_curated",
     out_dir: str = "/vol/mixkit_curated/latents_pt",
     model_repo: str = MODEL_NAME,
-    max_frames: int = 49,
+    max_frames: int = 33,
     skip_existing: bool = True,
 ):
     """Offline encode Mixkit clips on GPU; writes Helios stage-1 `.pt` files to the volume.
@@ -363,6 +484,23 @@ def export_mixkit_latents(
         skip_existing=skip_existing,
     )
     print(msg)
+
+
+@app.local_entrypoint()
+def audit_mixkit_latents(
+    jsonl: str = "/vol/mixkit_curated/manifest.jsonl",
+    out_dir: str = "/vol/mixkit_curated/latents_pt",
+    sample_limit: int = 20,
+):
+    """Audit latent export completeness and payload integrity on the mixkit volume."""
+    import json as _json
+
+    result = _audit_mixkit_latents_remote.remote(
+        jsonl=jsonl,
+        out_dir=out_dir,
+        sample_limit=sample_limit,
+    )
+    print(_json.dumps(result, indent=2, ensure_ascii=False))
 
 
 @app.local_entrypoint()
@@ -396,7 +534,7 @@ def i2v(
     num_frames: int = 99,
     guidance_scale: float = 5.0,
     num_inference_steps: int = 50,
-    num_latent_frames_per_chunk: int = 13,
+    num_latent_frames_per_chunk: int = 9,
     image_noise_sigma_min: float = 0.111,
     image_noise_sigma_max: float = 0.135,
     use_stage2: bool = False,

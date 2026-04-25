@@ -32,9 +32,10 @@ data_config:
   caption_dropout_p: 0
   id_token: ""
   use_stage1_dataset: true
-  min_num_frame: 49
+  # 9-latent setup: 33 pixel frames per chunk.
+  min_num_frame: 33
   instance_data_root:
-    - "/vol/mixkit_curated/latents_pt"
+    - "/vol/mixkit_curated/latents_pt_33"
 
 model_config:
   # Populated on the models volume by `_ensure_model_downloaded` before training (same as inference).
@@ -51,8 +52,8 @@ model_config:
   lora_layers: null
   lora_target_modules: []
   lora_exclude_modules: []
-  # Wider early self-attn LoRA scope improves motion onset sensitivity for i2v.
-  lora_early_attn1_blocks: 8
+  # Slightly wider LoRA scope helps preserve semantic structure through later frames.
+  lora_early_attn1_blocks: 12
   train_norm_layers: false
 
 validation_config:
@@ -68,9 +69,9 @@ validation_config:
   validation_prompts:
     - "A towering emerald wave surges forward, its crest curling with raw power and energy. Sunlight glints off the translucent water, illuminating the intricate textures and deep green hues within the wave's body. Close-up shot with dynamic movement."
   validation_guidance_scale: 5.0
-  # Must match VAE temporal depth for 49-frame clips (Wan/Helios ~13, not 9 for long-81/121 data).
+  # Must match 33-frame export: 9 latent frames.
   validation_latent_window_size:
-    - 13
+    - 9
   num_validation_videos: 1
   num_inference_steps: 50
   use_dynamic_shifting: true
@@ -90,7 +91,8 @@ training_config:
   checkpointing_steps: 200
   resume_from_checkpoint: "latest"
   save_checkpoints_custom: false
-  learning_rate: 1e-4
+  # Lower LR reduces overfitting artifacts and late-frame semantic washout.
+  learning_rate: 5e-5
   lr_scheduler: "constant"
   lr_warmup_steps: 200
   optimizer: "adamw"
@@ -103,10 +105,10 @@ training_config:
   logit_mean: 0.0
   logit_std: 1.0
   mode_scale: 1.29
-  # Plan §2: emphasize earlier *latent* time (first part of the clip) in the flow MSE.
+  # Keep mild early emphasis without starving late-frame learning.
   use_early_latent_time_loss_weight: true
-  early_latent_time_weight_start: 2.5
-  early_latent_time_weight_end: 1.0
+  early_latent_time_weight_start: 1.6
+  early_latent_time_weight_end: 1.1
   use_dynamic_shifting: false
   time_shift_type: "exponential"
   base_seq_len: 256
@@ -125,20 +127,20 @@ training_config:
     - 16
     - 2
     - 1
-  # Must match source_latent.shape[2] from mixkit .pt (49 px frames -> 13 latent frames).
+  # Must match source_latent.shape[2] from mixkit .pt (33 px frames -> 9 latent frames).
   latent_window_size:
-    - 13
+    - 9
   is_random_drop: true
   # I2V-focused curriculum:
   # - high i2v ratio keeps first frame as anchor (history mostly dropped)
   # - low v2v keeps some temporal robustness
   # - zero t2v avoids diluting i2v warm-start learning
-  random_drop_i2v_ratio: 0.7
-  random_drop_v2v_ratio: 0.1
+  random_drop_i2v_ratio: 0.6
+  random_drop_v2v_ratio: 0.2
   random_drop_t2v_ratio: 0.0
   corrupt_model_input: false
   corrupt_mode_model_input: "noise"
-  corrupt_mode_prob_model_input: 0.9
+  corrupt_mode_prob_model_input: 0.6
   is_frame_independent_corrupt_model_input: true
   is_chunk_independent_corrupt_model_input: false
   noise_corrupt_ratio_model_input: 0.33333333333333
@@ -147,7 +149,7 @@ training_config:
   downsample_max_corrupt_ratio_model_input: 1.0
   corrupt_history: true
   corrupt_mode_history: "noise"
-  corrupt_mode_prob_history: 0.9
+  corrupt_mode_prob_history: 0.6
   is_frame_independent_corrupt_history: true
   is_chunk_independent_corrupt_history: false
   noise_corrupt_ratio_history_short: 0.33333333333333

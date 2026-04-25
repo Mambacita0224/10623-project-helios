@@ -224,6 +224,9 @@ class HeliosScheduler(SchedulerMixin, ConfigMixin):
             timesteps = (sigmas * self.config.num_train_timesteps).copy()
             sigmas = torch.from_numpy(sigmas)
         else:
+            # Stage-1 / non-pyramid callers may omit stage_index.
+            if stage_index is None:
+                stage_index = 0
             stage_timesteps = self.timesteps_per_stage[stage_index]
             timesteps = np.linspace(
                 stage_timesteps[0].item(),
@@ -859,6 +862,16 @@ class HeliosScheduler(SchedulerMixin, ConfigMixin):
         dmd_timesteps: torch.FloatTensor | None = None,
         all_timesteps: torch.FloatTensor | None = None,
     ):
+        if dmd_sigmas is None or dmd_timesteps is None or all_timesteps is None:
+            raise ValueError(
+                "DMD scheduler requires dmd_sigmas, dmd_timesteps, and all_timesteps. "
+                "Ensure pipeline passes DMD step arguments."
+            )
+        if dmd_noisy_tensor is None and cur_sampling_step < len(all_timesteps) - 1:
+            raise ValueError(
+                "DMD scheduler requires dmd_noisy_tensor for intermediate steps."
+            )
+
         pred_image_or_video = self.convert_flow_pred_to_x0(
             flow_pred=model_output,
             xt=sample,

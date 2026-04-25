@@ -136,6 +136,8 @@ def run_one(
     image_b64: Optional[str],
     num_frames: int,
     guidance_scale: float,
+    num_inference_steps: int,
+    num_latent_frames_per_chunk: int,
     lora_path: Optional[str] = None,
     inference_profile: str = "emr",
 ) -> dict:
@@ -145,8 +147,9 @@ def run_one(
     - ``emr`` — default 25-suite recipe from docs/metrics: stage-2 pyramid (``2,2,2``) + low CFG
       (``guidance_scale`` from ``run_all``, default 1.0). **Not** the same as Mixkit PEFT training
       validation in ``train_helios`` / ``mixkit_lora_modal.yaml``.
-    - ``mixkit`` — **matches** that validation: no stage-2, ``num_inference_steps=50``,
-      ``guidance_scale=5``, ``num_latent_frames_per_chunk=13`` (as in
+        - ``mixkit`` — **matches** 33/9 training validation: no stage-2,
+            ``num_inference_steps=50``, ``guidance_scale=5``,
+            ``num_latent_frames_per_chunk=9``.
       ``validation_config`` / ``log_validation``). Use this to judge LoRA quality fairly.
 
     Returns {"condition", "clip_id", "mp4_bytes"} so the caller can route the
@@ -174,16 +177,16 @@ def run_one(
             "--output_folder", out_dir,
         ]
     elif inference_profile == "mixkit":
-        # Aligned with mixkit_lora_modal validation: stage-1 only, 50 steps, CFG 5, latent 13.
+        # Strictly aligned to the current 33/9 setup used in training configs.
         g = 5.0
         args = [
             "--base_model_path", local_model_dir,
             "--transformer_path", local_model_dir,
             "--prompt", prompt,
             "--num_frames", str(num_frames),
-            "--num_inference_steps", "50",
+            "--num_inference_steps", str(num_inference_steps),
             "--guidance_scale", str(g),
-            "--num_latent_frames_per_chunk", "13",
+            "--num_latent_frames_per_chunk", str(num_latent_frames_per_chunk),
             "--output_folder", out_dir,
         ]
     else:
@@ -245,6 +248,8 @@ def run_all(
     conditions: str = "t2v,i2v,i2v_amp",
     num_frames: int = 99,
     guidance_scale: float = 1.0,
+    num_inference_steps: int = 50,
+    num_latent_frames_per_chunk: int = 9,
     overwrite: bool = False,
     limit: int = 0,
     lora_path: str = "",
@@ -256,8 +261,8 @@ def run_all(
     "late" window (frames 25..98) large enough to be a stable reference.
     Use ``--limit N`` to smoke-test before committing to the full suite.
 
-    For **Mixkit LoRA** evaluation, use ``--inference-profile mixkit`` so inference matches
-    ``train_helios`` / ``mixkit_lora_modal.yaml`` validation (NOT the low-CFG stage-2 EMR default).
+    For **Mixkit LoRA** evaluation, use ``--inference-profile mixkit``.
+    This path is enforced to the 33/9 setup (33 frames, latent chunk 9) for consistency.
     """
     prompts_path = REPO_ROOT / "data" / "diagnostic" / "prompts.jsonl"
     images_dir = REPO_ROOT / "data" / "diagnostic" / "images"
@@ -287,6 +292,18 @@ def run_all(
     if inference_profile not in ("emr", "mixkit"):
         raise SystemExit("inference_profile must be 'emr' or 'mixkit'")
 
+    if inference_profile == "mixkit":
+        # Keep diagnostic generation strictly consistent with current 33/9 training.
+        if num_frames != 33:
+            print(f"[mixkit] override num_frames {num_frames} -> 33 for strict 33/9 consistency")
+            num_frames = 33
+        if num_latent_frames_per_chunk != 9:
+            print(
+                "[mixkit] override num_latent_frames_per_chunk "
+                f"{num_latent_frames_per_chunk} -> 9 for strict 33/9 consistency"
+            )
+            num_latent_frames_per_chunk = 9
+
     inputs = []
     for e in entries:
         for c in cond_list:
@@ -306,7 +323,18 @@ def run_all(
             use_lora = c in ("i2v_lora", "i2v_amp_lora")
             lp = lora_resolved if use_lora else None
             inputs.append(
-                (c, e["id"], e["prompt"], image_b64, num_frames, guidance_scale, lp, inference_profile)
+                (
+                    c,
+                    e["id"],
+                    e["prompt"],
+                    image_b64,
+                    num_frames,
+                    guidance_scale,
+                    num_inference_steps,
+                    num_latent_frames_per_chunk,
+                    lp,
+                    inference_profile,
+                )
             )
 
     if not inputs:

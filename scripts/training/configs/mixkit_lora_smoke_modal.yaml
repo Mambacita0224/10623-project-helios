@@ -31,9 +31,10 @@ data_config:
   caption_dropout_p: 0
   id_token: ""
   use_stage1_dataset: true
-  min_num_frame: 49
+  # 9-latent setup: 33 pixel frames per chunk.
+  min_num_frame: 33
   instance_data_root:
-    - "/vol/mixkit_curated/latents_pt"
+    - "/vol/mixkit_curated/latents_pt_33"
 
 model_config:
   pretrained_model_name_or_path: "/root/models/BestWishYsh/Helios-Distilled"
@@ -49,8 +50,8 @@ model_config:
   lora_layers: null
   lora_target_modules: []
   lora_exclude_modules: []
-  # Keep smoke aligned with full run so behavior is predictive.
-  lora_early_attn1_blocks: 8
+  # Slightly wider LoRA scope helps preserve semantic structure through later frames.
+  lora_early_attn1_blocks: 12
   train_norm_layers: false
 
 validation_config:
@@ -61,12 +62,13 @@ validation_config:
   first_step_valid: true
   validation_height: 384
   validation_width: 640
-  validation_max_num_frames: 99
+  # Smoke: 33 px frames = 9 latent frames = 1 section, so visual checks are simpler.
+  validation_max_num_frames: 33
   validation_prompts:
     - "A towering emerald wave surges forward, its crest curling with raw power and energy. Sunlight glints off the translucent water, illuminating the intricate textures and deep green hues within the wave's body. Close-up shot with dynamic movement."
   validation_guidance_scale: 5.0
   validation_latent_window_size:
-    - 13
+    - 9
   num_validation_videos: 1
   num_inference_steps: 50
   use_dynamic_shifting: true
@@ -87,7 +89,8 @@ training_config:
   # null = always 100 fresh steps (good for W&B curves). Use "latest" to continue from output_dir.
   resume_from_checkpoint: null
   save_checkpoints_custom: false
-  learning_rate: 1e-4
+  # Lower LR reduces overfitting artifacts and late-frame semantic washout in smoke.
+  learning_rate: 5e-5
   lr_scheduler: "constant"
   lr_warmup_steps: 20
   optimizer: "adamw"
@@ -101,8 +104,8 @@ training_config:
   logit_std: 1.0
   mode_scale: 1.29
   use_early_latent_time_loss_weight: true
-  early_latent_time_weight_start: 2.5
-  early_latent_time_weight_end: 1.0
+  early_latent_time_weight_start: 1.6
+  early_latent_time_weight_end: 1.1
   use_dynamic_shifting: false
   time_shift_type: "exponential"
   base_seq_len: 256
@@ -122,14 +125,14 @@ training_config:
     - 2
     - 1
   latent_window_size:
-    - 13
+    - 9
   is_random_drop: true
-  random_drop_i2v_ratio: 0.7
-  random_drop_v2v_ratio: 0.1
+  random_drop_i2v_ratio: 0.6
+  random_drop_v2v_ratio: 0.2
   random_drop_t2v_ratio: 0.0
   corrupt_model_input: false
   corrupt_mode_model_input: "noise"
-  corrupt_mode_prob_model_input: 0.9
+  corrupt_mode_prob_model_input: 0.6
   is_frame_independent_corrupt_model_input: true
   is_chunk_independent_corrupt_model_input: false
   noise_corrupt_ratio_model_input: 0.33333333333333
@@ -138,7 +141,7 @@ training_config:
   downsample_max_corrupt_ratio_model_input: 1.0
   corrupt_history: true
   corrupt_mode_history: "noise"
-  corrupt_mode_prob_history: 0.9
+  corrupt_mode_prob_history: 0.6
   is_frame_independent_corrupt_history: true
   is_chunk_independent_corrupt_history: false
   noise_corrupt_ratio_history_short: 0.33333333333333
