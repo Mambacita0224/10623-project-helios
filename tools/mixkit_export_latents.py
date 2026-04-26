@@ -4,7 +4,7 @@ Matches the on-disk format produced by `tools/offload_data/get_long-latents.py`:
   {uttid}_{T}_{H}_{W}.pt
 with `vae_latent`, `prompt_embed`, `first_frames_image` (PIL), `prompt_raw`.
 
-After export, set `data_config.min_num_frame` to the same T (e.g. 49) and point
+After export, set `data_config.min_num_frame` to the same T (e.g. 99) and point
 `instance_data_root` at the output folder. Delete `dataset_cache.pkl` in that
 folder or use `force_rebuild: true` if you re-export with different T.
 
@@ -107,8 +107,8 @@ def main() -> None:
     parser.add_argument(
         "--max_frames",
         type=int,
-        default=49,
-        help="Max frames to read per clip (Mixkit prep uses 49).",
+        default=99,
+        help="Max frames to read per clip (Mixkit prep defaults to 99).",
     )
     parser.add_argument(
         "--skip_existing",

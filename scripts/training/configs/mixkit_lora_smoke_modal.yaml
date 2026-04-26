@@ -31,10 +31,10 @@ data_config:
   caption_dropout_p: 0
   id_token: ""
   use_stage1_dataset: true
-  # 9-latent setup: 33 pixel frames per chunk.
-  min_num_frame: 33
+  # Unified long-clip setup: 99 pixel frames per clip for train/eval alignment.
+  min_num_frame: 99
   instance_data_root:
-    - "/vol/mixkit_curated/latents_pt_33"
+    - "/vol/mixkit_curated/latents_pt_99"
 
 model_config:
   pretrained_model_name_or_path: "/root/models/BestWishYsh/Helios-Distilled"
@@ -62,8 +62,8 @@ validation_config:
   first_step_valid: true
   validation_height: 384
   validation_width: 640
-  # Smoke: 33 px frames = 9 latent frames = 1 section, so visual checks are simpler.
-  validation_max_num_frames: 33
+  # Keep smoke and full validation on the same long-clip horizon.
+  validation_max_num_frames: 99
   validation_prompts:
     - "A towering emerald wave surges forward, its crest curling with raw power and energy. Sunlight glints off the translucent water, illuminating the intricate textures and deep green hues within the wave's body. Close-up shot with dynamic movement."
   validation_guidance_scale: 5.0

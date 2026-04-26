@@ -138,14 +138,14 @@ def _ensure_model_downloaded(repo_id: str = MODEL_NAME) -> str:
 def _export_mixkit_latents_remote(
     jsonl: str = "/vol/mixkit_curated/manifest.jsonl",
     video_root: str = "/vol/mixkit_curated",
-    out_dir: str = "/vol/mixkit_curated/latents_pt",
+    out_dir: str = "/vol/mixkit_curated/latents_pt_99",
     model_repo: str = MODEL_NAME,
-    max_frames: int = 33,
+    max_frames: int = 99,
     skip_existing: bool = True,
 ) -> str:
     """VAE+UMT5 encode Mixkit clips from jsonl; write .pt for stage-1 / train_helios.
 
-    Set ``data_config.min_num_frame`` to the same as ``max_frames`` (e.g. 49) and
+    Set ``data_config.min_num_frame`` to the same as ``max_frames`` (e.g. 99) and
     ``instance_data_root: [\"<out_dir>\"]`` with ``use_stage1_dataset: true``.
     """
     import subprocess
@@ -182,7 +182,7 @@ def _export_mixkit_latents_remote(
 )
 def _audit_mixkit_latents_remote(
     jsonl: str = "/vol/mixkit_curated/manifest.jsonl",
-    out_dir: str = "/vol/mixkit_curated/latents_pt",
+    out_dir: str = "/vol/mixkit_curated/latents_pt_99",
     sample_limit: int = 20,
 ) -> dict:
     """Audit latent export coverage and payload sanity against the manifest.
@@ -446,7 +446,7 @@ def train_mixkit_lora(
 ):
     """Fine-tune LoRA on precomputed Mixkit latents (DDP on multiple GPUs if ``_TRAIN_GPU`` requests them).
 
-    Requires: ``export_mixkit_latents`` has populated ``/vol/mixkit_curated/latents_pt`` on
+    Requires: ``export_mixkit_latents`` has populated ``/vol/mixkit_curated/latents_pt_99`` on
     volume ``helios-mixkit``, and this app mounts the same volume at ``/vol``.
 
     W&B: create ``modal secret create wandb WANDB_API_KEY=...`` (see ``modal/README.md``).
@@ -465,9 +465,9 @@ def train_mixkit_lora(
 def export_mixkit_latents(
     jsonl: str = "/vol/mixkit_curated/manifest.jsonl",
     video_root: str = "/vol/mixkit_curated",
-    out_dir: str = "/vol/mixkit_curated/latents_pt",
+    out_dir: str = "/vol/mixkit_curated/latents_pt_99",
     model_repo: str = MODEL_NAME,
-    max_frames: int = 33,
+    max_frames: int = 99,
     skip_existing: bool = True,
 ):
     """Offline encode Mixkit clips on GPU; writes Helios stage-1 `.pt` files to the volume.
@@ -489,7 +489,7 @@ def export_mixkit_latents(
 @app.local_entrypoint()
 def audit_mixkit_latents(
     jsonl: str = "/vol/mixkit_curated/manifest.jsonl",
-    out_dir: str = "/vol/mixkit_curated/latents_pt",
+    out_dir: str = "/vol/mixkit_curated/latents_pt_99",
     sample_limit: int = 20,
 ):
     """Audit latent export completeness and payload integrity on the mixkit volume."""

@@ -32,10 +32,10 @@ data_config:
   caption_dropout_p: 0
   id_token: ""
   use_stage1_dataset: true
-  # 9-latent setup: 33 pixel frames per chunk.
-  min_num_frame: 33
+  # Unified long-clip setup: 99 pixel frames per clip for train/eval alignment.
+  min_num_frame: 99
   instance_data_root:
-    - "/vol/mixkit_curated/latents_pt_33"
+    - "/vol/mixkit_curated/latents_pt_99"
 
 model_config:
   # Populated on the models volume by `_ensure_model_downloaded` before training (same as inference).
@@ -69,7 +69,7 @@ validation_config:
   validation_prompts:
     - "A towering emerald wave surges forward, its crest curling with raw power and energy. Sunlight glints off the translucent water, illuminating the intricate textures and deep green hues within the wave's body. Close-up shot with dynamic movement."
   validation_guidance_scale: 5.0
-  # Must match 33-frame export: 9 latent frames.
+  # 99-frame export with latent chunk size 9.
   validation_latent_window_size:
     - 9
   num_validation_videos: 1
@@ -127,7 +127,7 @@ training_config:
     - 16
     - 2
     - 1
-  # Must match source_latent.shape[2] from mixkit .pt (33 px frames -> 9 latent frames).
+  # Long-clip training still uses latent chunk size 9 within each sampled rollout window.
   latent_window_size:
     - 9
   is_random_drop: true

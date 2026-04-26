@@ -5,8 +5,8 @@ This wrapper reuses eval/compute_emr_ttfm.py to keep metric definitions identica
 with your existing diagnostic pipeline, then applies a PASS/FAIL gate.
 
 Default expectation:
-- baseline videos in outputs/diagnostic/i2v
-- smoke LoRA videos in outputs/diagnostic/i2v_lora
+- baseline videos in outputs/diagnostic/mixkit/i2v
+- smoke LoRA videos in outputs/diagnostic/mixkit/i2v_lora
 
 Exit codes:
 - 0: PASS (safe to move to full)
@@ -63,10 +63,10 @@ def _check(condition: bool, title: str, detail: str) -> dict:
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--repo-root", type=Path, default=Path("."))
-    parser.add_argument("--baseline-dir", type=Path, default=Path("outputs/diagnostic/i2v"))
-    parser.add_argument("--candidate-dir", type=Path, default=Path("outputs/diagnostic/i2v_lora"))
+    parser.add_argument("--baseline-dir", type=Path, default=Path("outputs/diagnostic/mixkit/i2v"))
+    parser.add_argument("--candidate-dir", type=Path, default=Path("outputs/diagnostic/mixkit/i2v_lora"))
     parser.add_argument("--t2v-dir", type=Path, default=Path("outputs/diagnostic/t2v"))
-    parser.add_argument("--fps", type=int, default=16)
+    parser.add_argument("--fps", type=int, default=24)
 
     parser.add_argument("--min-early-abs", type=float, default=0.18)
     parser.add_argument("--min-late-abs", type=float, default=0.45)

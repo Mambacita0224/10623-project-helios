@@ -144,13 +144,12 @@ def run_one(
     """Run Helios inference under one condition.
 
     ``inference_profile``:
-    - ``emr`` — default 25-suite recipe from docs/metrics: stage-2 pyramid (``2,2,2``) + low CFG
-      (``guidance_scale`` from ``run_all``, default 1.0). **Not** the same as Mixkit PEFT training
-      validation in ``train_helios`` / ``mixkit_lora_modal.yaml``.
-        - ``mixkit`` — **matches** 33/9 training validation: no stage-2,
-            ``num_inference_steps=50``, ``guidance_scale=5``,
-            ``num_latent_frames_per_chunk=9``.
-      ``validation_config`` / ``log_validation``). Use this to judge LoRA quality fairly.
+        - ``emr`` — default 25-suite recipe from docs/metrics: stage-2 pyramid (``2,2,2``) + low CFG
+            (``guidance_scale`` from ``run_all``, default 1.0). **Not** the same as Mixkit PEFT training
+            validation in ``train_helios`` / ``mixkit_lora_modal.yaml``.
+        - ``mixkit`` — **matches** 99/9 training validation: no stage-2,
+            ``num_inference_steps=50``, ``guidance_scale=5``, ``num_latent_frames_per_chunk=9``.
+            Use this to judge LoRA quality fairly.
 
     Returns {"condition", "clip_id", "mp4_bytes"} so the caller can route the
     result to the correct output path regardless of completion order.
@@ -177,7 +176,7 @@ def run_one(
             "--output_folder", out_dir,
         ]
     elif inference_profile == "mixkit":
-        # Strictly aligned to the current 33/9 setup used in training configs.
+        # Strictly aligned to the current 99/9 setup used in training configs.
         g = 5.0
         args = [
             "--base_model_path", local_model_dir,
@@ -262,7 +261,7 @@ def run_all(
     Use ``--limit N`` to smoke-test before committing to the full suite.
 
     For **Mixkit LoRA** evaluation, use ``--inference-profile mixkit``.
-    This path is enforced to the 33/9 setup (33 frames, latent chunk 9) for consistency.
+    This path is enforced to the 99/9 setup (99 frames, latent chunk 9) for consistency.
     """
     prompts_path = REPO_ROOT / "data" / "diagnostic" / "prompts.jsonl"
     images_dir = REPO_ROOT / "data" / "diagnostic" / "images"
@@ -293,14 +292,14 @@ def run_all(
         raise SystemExit("inference_profile must be 'emr' or 'mixkit'")
 
     if inference_profile == "mixkit":
-        # Keep diagnostic generation strictly consistent with current 33/9 training.
-        if num_frames != 33:
-            print(f"[mixkit] override num_frames {num_frames} -> 33 for strict 33/9 consistency")
-            num_frames = 33
+        # Keep diagnostic generation strictly consistent with current 99/9 training.
+        if num_frames != 99:
+            print(f"[mixkit] override num_frames {num_frames} -> 99 for strict 99/9 consistency")
+            num_frames = 99
         if num_latent_frames_per_chunk != 9:
             print(
                 "[mixkit] override num_latent_frames_per_chunk "
-                f"{num_latent_frames_per_chunk} -> 9 for strict 33/9 consistency"
+                f"{num_latent_frames_per_chunk} -> 9 for strict 99/9 consistency"
             )
             num_latent_frames_per_chunk = 9
 

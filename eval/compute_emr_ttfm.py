@@ -221,7 +221,7 @@ def main():
     )
     parser.add_argument("--output", required=True, type=pathlib.Path)
     parser.add_argument("--figure", required=True, type=pathlib.Path)
-    parser.add_argument("--fps", type=int, default=16)
+    parser.add_argument("--fps", type=int, default=24)
     args = parser.parse_args()
 
     conds: Dict[str, Dict] = {}

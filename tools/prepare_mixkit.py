@@ -4,7 +4,7 @@ Pipeline on a Modal volume:
 
     1. Download `FastVideo/Mixkit-Src` into `/vol/mixkit_src` (first time).
     2. Walk the motion-oriented category whitelist below.
-    3. Extract a centered 49-frame window at 16 fps and 384x640 per clip.
+    3. Extract a centered 99-frame window at 24 fps and 384x640 per clip.
     4. Compute Farneback flow; derive EMR = mean_flow_early / mean_flow_late.
     5. Keep clips with `mean_flow_early >= EARLY_FLOW_MIN` and
        `EMR in [EMR_LOW, EMR_HIGH]`.
@@ -43,8 +43,8 @@ _HF_MODAL_SECRET = "huggingface-secret"
 
 # ---- Pipeline constants -----------------------------------------------------
 
-TARGET_FPS = 16
-TARGET_FRAMES = 49
+TARGET_FPS = 24
+TARGET_FRAMES = 99
 TARGET_H = 384
 TARGET_W = 640
 EARLY_K = 24
@@ -421,19 +421,60 @@ def build_manifest(
     max_per_category: int = 60,
     num_workers: int | None = None,
     batch_size: int | None = None,
+    target_fps: int = 24,
+    target_frames: int = 99,
+    early_k: int = 24,
+    early_flow_min: float = 2.5,
+    emr_low: float = 0.7,
+    emr_high: float = 1.3,
+    clean_output: bool = True,
+    categories_keep_csv: str = "",
+    include_all_categories: bool = False,
+    categories_exclude_csv: str = "",
 ):
     """Walk the whitelisted categories, filter, and write the manifest (parallel)."""
     from concurrent.futures import ProcessPoolExecutor
 
+    global TARGET_FPS, TARGET_FRAMES, EARLY_K, EARLY_FLOW_MIN, EMR_LOW, EMR_HIGH
+    TARGET_FPS = int(target_fps)
+    TARGET_FRAMES = int(target_frames)
+    EARLY_K = int(early_k)
+    EARLY_FLOW_MIN = float(early_flow_min)
+    EMR_LOW = float(emr_low)
+    EMR_HIGH = float(emr_high)
+
+    if TARGET_FPS <= 0:
+        raise ValueError(f"target_fps must be > 0, got {TARGET_FPS}")
+    if TARGET_FRAMES <= 1:
+        raise ValueError(f"target_frames must be > 1, got {TARGET_FRAMES}")
+    if not (0 <= EMR_LOW <= EMR_HIGH):
+        raise ValueError(f"Require 0 <= emr_low <= emr_high, got {EMR_LOW}, {EMR_HIGH}")
+
     n_workers = num_workers or min(16, max(1, os.cpu_count() or 8))
     bs = batch_size or max(8, min(64, n_workers * 4))
-    print(f"[build_manifest] num_workers={n_workers} batch_size={bs}")
+    print(
+        "[build_manifest] "
+        f"num_workers={n_workers} batch_size={bs} "
+        f"target={TARGET_FRAMES}f@{TARGET_FPS}fps "
+        f"early_k={EARLY_K} early_flow_min={EARLY_FLOW_MIN} "
+        f"emr=[{EMR_LOW}, {EMR_HIGH}] "
+        f"clean_output={clean_output} include_all_categories={include_all_categories}"
+    )
 
     src_root = pathlib.Path(MOUNT_PATH) / "mixkit_src"
     out_root = pathlib.Path(MOUNT_PATH) / "mixkit_curated"
     clips_dir = out_root / "clips"
     frames_dir = out_root / "first_frames"
     staging_root = out_root / "_staging"
+    manifest_path = out_root / "manifest.jsonl"
+
+    if clean_output and out_root.exists():
+        print(f"[clean] removing previous outputs under {out_root} (clips, first_frames, _staging, manifest)")
+        shutil.rmtree(clips_dir, ignore_errors=True)
+        shutil.rmtree(frames_dir, ignore_errors=True)
+        shutil.rmtree(staging_root, ignore_errors=True)
+        manifest_path.unlink(missing_ok=True)
+
     clips_dir.mkdir(parents=True, exist_ok=True)
     frames_dir.mkdir(parents=True, exist_ok=True)
     staging_root.mkdir(parents=True, exist_ok=True)
@@ -443,12 +484,21 @@ def build_manifest(
             f"source not found at {src_root}; run `download_source` first"
         )
 
-    cat_dirs = sorted(
-        [d for d in src_root.iterdir() if d.is_dir() and d.name in CATEGORIES_KEEP]
-    )
-    print(f"found {len(cat_dirs)} whitelisted categories: {[d.name for d in cat_dirs]}")
+    user_keep = {x.strip() for x in categories_keep_csv.split(",") if x.strip()}
+    user_exclude = {x.strip() for x in categories_exclude_csv.split(",") if x.strip()}
 
-    manifest_path = out_root / "manifest.jsonl"
+    if include_all_categories:
+        keep_set = {d.name for d in src_root.iterdir() if d.is_dir()}
+    else:
+        keep_set = set(CATEGORIES_KEEP)
+    if user_keep:
+        keep_set.update(user_keep)
+    if user_exclude:
+        keep_set.difference_update(user_exclude)
+
+    cat_dirs = sorted([d for d in src_root.iterdir() if d.is_dir() and d.name in keep_set])
+    print(f"found {len(cat_dirs)} selected categories: {[d.name for d in cat_dirs]}")
+
     stats = {
         "attempted": 0,
         "read_failed": 0,
