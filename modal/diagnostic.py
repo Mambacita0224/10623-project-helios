@@ -176,8 +176,10 @@ def run_one(
             "--output_folder", out_dir,
         ]
     elif inference_profile == "mixkit":
-        # Strictly aligned to the current 99/9 setup used in training configs.
-        g = 5.0
+        # Stable 99/9 baseline recipe:
+        # - keep long-clip/frame-window consistency (99/9)
+        # - avoid aggressive CFG/noise settings that can trigger unstable I2V outputs
+        g = guidance_scale
         args = [
             "--base_model_path", local_model_dir,
             "--transformer_path", local_model_dir,
@@ -186,6 +188,8 @@ def run_one(
             "--num_inference_steps", str(num_inference_steps),
             "--guidance_scale", str(g),
             "--num_latent_frames_per_chunk", str(num_latent_frames_per_chunk),
+            "--is_enable_stage2",
+            "--pyramid_num_inference_steps_list", "2", "2", "2",
             "--output_folder", out_dir,
         ]
     else:

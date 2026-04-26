@@ -123,6 +123,9 @@ class ValidationConfig:
     # ---- Stage 1 ----
     use_kv_cache: bool = field(default=False)
     # ---- Stage 2 ----
+    # If True, validation sampling enables stage-2 even when training_config.is_enable_stage2 is False.
+    # Useful for stage-1 training runs that still want to validate with a stable stage-2 decode recipe.
+    validation_force_stage2: bool = field(default=False)
     stage2_simulated_inference_steps: list[int] = field(default_factory=lambda: [10, 10, 10])
 
 

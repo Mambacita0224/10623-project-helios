@@ -1,21 +1,13 @@
-# Fast Modal smoke: same PEFT+loss as `mixkit_lora_modal.yaml`, but 100 steps and separate
-# `output_dir` so you do not mix checkpoints with a full run. W&B name distinct for filtering.
-#
-#   modal run modal/app.py::train_mixkit_lora --config scripts/training/configs/mixkit_lora_smoke_modal.yaml
-#
-# If you see `Configuration mismatch` vs output_dir/config.json, clear it once (checkpoints stay):
-#   modal run modal/app.py::clear_mixkit_train_stale_config --path /vol/mixkit_curated/train_lora_smoke/config.json
-#
-# Expect **many fewer** trainable params than the old all-linear run (~2–15M for early attn1-only,
-# depending on B and rank) — check the log line "Num generator trainable parameters".
+# Light full run from the best smoke checkpoint (checkpoint-50-final).
+# Goal: keep early-motion gains while reducing regression risk.
 
-output_dir: /vol/mixkit_curated/train_lora_smoke
+output_dir: /vol/mixkit_curated/train_lora_from50_light
 logging_dir: logs
 seed: 43
 
 report_to:
   tracker_name: Helios-Mixkit-LoRA
-  wandb_name: mixkit_lora_smoke
+  wandb_name: mixkit_lora_from50_light
   report_to: wandb
 
 data_config:
@@ -31,7 +23,6 @@ data_config:
   caption_dropout_p: 0
   id_token: ""
   use_stage1_dataset: true
-  # Unified long-clip setup: 99 pixel frames per clip for train/eval alignment.
   min_num_frame: 99
   instance_data_root:
     - "/vol/mixkit_curated/latents_pt_99"
@@ -39,40 +30,36 @@ data_config:
 model_config:
   pretrained_model_name_or_path: "/root/models/BestWishYsh/Helios-Distilled"
   transformer_model_name_or_path: "/root/models/BestWishYsh/Helios-Distilled"
-  load_checkpoints_custom: false
+  # Initialize from the best smoke checkpoint.
+  load_checkpoints_custom: true
+  load_model_path: "/vol/mixkit_curated/train_lora_smoke/checkpoint-50-final"
   load_dcp: false
   upcast_vae: true
   enable_slicing: false
   enable_tiling: false
-  # Smaller LoRA capacity is less likely to hurt semantics in short smoke runs.
+  # Must match the smoke checkpoint adapter structure.
   lora_rank: 8
   lora_alpha: 8.0
   lora_dropout: 0.0
   lora_layers: null
   lora_target_modules: []
   lora_exclude_modules: []
-  # Keep smoke LoRA scope moderate; very wide scope can overfit quickly in short runs.
   lora_early_attn1_blocks: 5
   train_norm_layers: false
 
 validation_config:
   validation_sample_type: i2v
   validation_image_path: example/wave.jpg
-  # Smoke needs both pre-train (step 0) and post-train checks.
-  # Validate more frequently so we can stop at the best checkpoint before quality regresses.
-  validation_steps: 50
+  validation_steps: 100
   first_step_valid: true
   validation_height: 384
   validation_width: 640
-  # Keep smoke and full validation on the same long-clip horizon.
   validation_max_num_frames: 99
   validation_prompts:
     - "A towering emerald wave surges forward, its crest curling with raw power and energy. Sunlight glints off the translucent water, illuminating the intricate textures and deep green hues within the wave's body. Close-up shot with dynamic movement."
-  # Align smoke validation to the proven stable mixkit I2V decode recipe.
   validation_guidance_scale: 1.0
   validation_latent_window_size:
     - 9
-  # Validation-only stage-2 switch: keep stage-1 training objective unchanged.
   validation_force_stage2: true
   stage2_simulated_inference_steps:
     - 2
@@ -91,32 +78,34 @@ training_config:
   upcast_before_saving: false
   offload: false
   mixed_precision: "bf16"
-  # 100 steps is often too short for a reliable motion-quality judgment.
-  max_train_steps: 200
+  # Light full run: extend carefully, do not jump to 2000 directly.
+  max_train_steps: 600
   train_batch_size: 1
   gradient_accumulation_steps: 1
-  checkpointing_steps: 50
-  # null = always 100 fresh steps (good for W&B curves). Use "latest" to continue from output_dir.
+  checkpointing_steps: 100
   resume_from_checkpoint: null
   save_checkpoints_custom: false
-  # Slower updates + decay usually prevent step-100/200 quality collapse.
-  learning_rate: 5e-5
+
+  # Conservative continuation LR.
+  learning_rate: 2e-5
   lr_scheduler: "cosine"
-  lr_warmup_steps: 30
+  lr_warmup_steps: 80
   optimizer: "adamw"
   adam_beta1: 0.9
   adam_beta2: 0.999
   adam_weight_decay: 1e-04
   adam_epsilon: 1e-08
   max_grad_norm: 1.0
+
   weighting_scheme: "logit_normal"
   logit_mean: 0.0
   logit_std: 1.0
   mode_scale: 1.29
-  # Mild early emphasis to improve warm-start smoothness without overpowering late-frame quality.
+
   use_early_latent_time_loss_weight: true
   early_latent_time_weight_start: 1.2
   early_latent_time_weight_end: 1.0
+
   use_dynamic_shifting: false
   time_shift_type: "exponential"
   base_seq_len: 256
@@ -124,13 +113,14 @@ training_config:
   base_shift: 0.5
   max_shift: 1.15
   vae_decode_type: "default"
-  # Keep EMA off in Modal smoke unless deepspeed is installed in the image.
+
   use_ema: false
   use_ema_validation: false
   ema_decay: 0.999
   ema_start_step: 40
   ema_zero3_port: 10543
   ema_deepspeed_config_file: "scripts/accelerate_configs/zero3.json"
+
   is_enable_stage1: true
   history_sizes:
     - 16
@@ -138,11 +128,12 @@ training_config:
     - 1
   latent_window_size:
     - 9
+
   is_random_drop: true
-  # Re-balance toward temporal learning; too high i2v-only ratio can collapse motion.
   random_drop_i2v_ratio: 0.5
   random_drop_v2v_ratio: 0.3
   random_drop_t2v_ratio: 0.0
+
   corrupt_model_input: false
   corrupt_mode_model_input: "noise"
   corrupt_mode_prob_model_input: 0.3
@@ -152,6 +143,7 @@ training_config:
   noise_corrupt_clean_prob_model_input: 0.1
   downsample_min_corrupt_ratio_model_input: 0.9
   downsample_max_corrupt_ratio_model_input: 1.0
+
   corrupt_history: true
   corrupt_mode_history: "noise"
   corrupt_mode_prob_history: 0.2
@@ -163,6 +155,7 @@ training_config:
   noise_corrupt_clean_prob_history: 0.1
   downsample_min_corrupt_ratio_history: 0.9
   downsample_max_corrupt_ratio_history: 1.0
+
   is_amplify_history: false
   history_scale_mode: "per_head"
   is_train_full_patch_embedding: false

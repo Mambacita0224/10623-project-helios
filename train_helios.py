@@ -2239,6 +2239,9 @@ def main(args):
                             all_videos = []
                             all_prompts = []
                             for validation_prompt in args.validation_config.validation_prompts:
+                                validation_enable_stage2 = args.training_config.is_enable_stage2 or getattr(
+                                    args.validation_config, "validation_force_stage2", False
+                                )
                                 pipeline_args = {
                                     "prompt": args.data_config.id_token + validation_prompt,
                                     "negative_prompt": "Bright tones, overexposed, static, blurred details, subtitles, style, works, paintings, images, static, overall gray, worst quality, low quality, JPEG compression residue, ugly, incomplete, extra fingers, poorly drawn hands, poorly drawn faces, deformed, disfigured, misshapen limbs, fused fingers, still picture, messy background, three legs, many people in the background, walking backwards",
@@ -2256,7 +2259,7 @@ def main(args):
                                     "is_keep_x0": True,
                                     "use_kv_cache": args.validation_config.use_kv_cache,
                                     # For Stage 2
-                                    "is_enable_stage2": args.training_config.is_enable_stage2,
+                                    "is_enable_stage2": validation_enable_stage2,
                                     "stage2_num_stages": args.training_config.stage2_num_stages,
                                     "stage2_num_inference_steps_list": args.validation_config.stage2_simulated_inference_steps,
                                     "vae_decode_type": args.training_config.vae_decode_type,
@@ -2454,6 +2457,9 @@ def main(args):
                 all_videos = []
                 all_prompts = []
                 for validation_prompt in args.validation_config.validation_prompts:
+                    validation_enable_stage2 = args.training_config.is_enable_stage2 or getattr(
+                        args.validation_config, "validation_force_stage2", False
+                    )
                     pipeline_args = {
                         "prompt": args.data_config.id_token + validation_prompt,
                         "negative_prompt": "Bright tones, overexposed, static, blurred details, subtitles, style, works, paintings, images, static, overall gray, worst quality, low quality, JPEG compression residue, ugly, incomplete, extra fingers, poorly drawn hands, poorly drawn faces, deformed, disfigured, misshapen limbs, fused fingers, still picture, messy background, three legs, many people in the background, walking backwards",
@@ -2471,7 +2477,7 @@ def main(args):
                         "is_keep_x0": True,
                         "use_kv_cache": args.validation_config.use_kv_cache,
                         # For Stage 2
-                        "is_enable_stage2": args.training_config.is_enable_stage2,
+                        "is_enable_stage2": validation_enable_stage2,
                         "stage2_num_stages": args.training_config.stage2_num_stages,
                         "stage2_num_inference_steps_list": args.validation_config.stage2_simulated_inference_steps,
                         "vae_decode_type": args.training_config.vae_decode_type,

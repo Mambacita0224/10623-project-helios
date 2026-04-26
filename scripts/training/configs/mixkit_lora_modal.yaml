@@ -68,13 +68,20 @@ validation_config:
   validation_max_num_frames: 99
   validation_prompts:
     - "A towering emerald wave surges forward, its crest curling with raw power and energy. Sunlight glints off the translucent water, illuminating the intricate textures and deep green hues within the wave's body. Close-up shot with dynamic movement."
-  validation_guidance_scale: 5.0
+  # Align full-run validation to the same stable mixkit I2V decode recipe as smoke.
+  validation_guidance_scale: 1.0
   # 99-frame export with latent chunk size 9.
   validation_latent_window_size:
     - 9
+  # Validation-only stage-2 switch: keep stage-1 training objective unchanged.
+  validation_force_stage2: true
+  stage2_simulated_inference_steps:
+    - 2
+    - 2
+    - 2
   num_validation_videos: 1
   num_inference_steps: 50
-  use_dynamic_shifting: true
+  use_dynamic_shifting: false
   time_shift_type: "exponential"
 
 training_config:

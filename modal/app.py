@@ -167,6 +167,8 @@ def _export_mixkit_latents_remote(
         local_model_dir,
         "--max_frames",
         str(max_frames),
+        "--pixel_frames_per_section",
+        "33",
     ]
     if skip_existing:
         cmd.append("--skip_existing")

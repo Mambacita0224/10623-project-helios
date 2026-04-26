@@ -8,6 +8,10 @@ After export, set `data_config.min_num_frame` to the same T (e.g. 99) and point
 `instance_data_root` at the output folder. Delete `dataset_cache.pkl` in that
 folder or use `force_rebuild: true` if you re-export with different T.
 
+For 99-frame training with latent chunk size 9, use
+`--pixel_frames_per_section 33` so each clip is encoded as 3 sections and the
+saved `vae_latent` shape is `[3, C, 9, H, W]`.
+
 Example (local, clips under video_root):
   python tools/mixkit_export_latents.py \\
     --jsonl data/train/mixkit_curated.jsonl \\
@@ -111,6 +115,15 @@ def main() -> None:
         help="Max frames to read per clip (Mixkit prep defaults to 99).",
     )
     parser.add_argument(
+        "--pixel_frames_per_section",
+        type=int,
+        default=33,
+        help=(
+            "If >0 and T > section, split each clip into equal pixel-frame sections before VAE encode. "
+            "Example: 99-frame clips with section=33 become 3 latent sections. Set 0 to disable."
+        ),
+    )
+    parser.add_argument(
         "--skip_existing",
         action="store_true",
         help="Skip if target .pt already exists (same as get_long-latents skip).",
@@ -191,18 +204,38 @@ def main() -> None:
             n_skip += 1
             continue
 
-        with torch.no_grad():
-            pixel_values = video.unsqueeze(0).permute(0, 2, 1, 3, 4).to(
-                device=device, dtype=vae.dtype
-            )
-            vae_latents = vae.encode(pixel_values).latent_dist.sample()
-            vae_latents = (vae_latents - latents_mean) * latents_std
-            if vae_latents.dim() == 4:
-                vae_latents = vae_latents.unsqueeze(0)
-            if vae_latents.dim() != 5:
-                raise RuntimeError(
-                    f"Expected 5D vae latents (b,c,t,h,w), got shape {tuple(vae_latents.shape)}"
+        section_px = int(args.pixel_frames_per_section)
+        if section_px > 0 and t > section_px:
+            if t % section_px != 0:
+                print(
+                    f"[skip] {video_path}: T={t} not divisible by pixel_frames_per_section={section_px}",
+                    file=sys.stderr,
                 )
+                continue
+            n_sections = t // section_px
+            video_sections = video.reshape(n_sections, section_px, *video.shape[1:])
+        else:
+            video_sections = video.unsqueeze(0)
+
+        with torch.no_grad():
+            section_latents = []
+            for sec in video_sections:
+                pixel_values = sec.unsqueeze(0).permute(0, 2, 1, 3, 4).to(
+                    device=device, dtype=vae.dtype
+                )
+                lat = vae.encode(pixel_values).latent_dist.sample()
+                lat = (lat - latents_mean) * latents_std
+                if lat.dim() == 4:
+                    lat = lat.unsqueeze(0)
+                if lat.dim() != 5:
+                    raise RuntimeError(
+                        f"Expected 5D section latents (b,c,t,h,w), got shape {tuple(lat.shape)}"
+                    )
+                # keep only section-local sample dim -> [C,T,H,W]
+                section_latents.append(lat[0])
+
+            # training dataloader expects [num_sections, C, T, H, W]
+            vae_latents = torch.stack(section_latents, dim=0)
 
             pe, _pam = encode_prompt(
                 tokenizer=tokenizer,
