@@ -1,4 +1,4 @@
-# Light full run from the best smoke checkpoint (checkpoint-50-final).
+# Light full run from the best smoke checkpoint (checkpoint-50).
 # Goal: keep early-motion gains while reducing regression risk.
 
 output_dir: /vol/mixkit_curated/train_lora_from50_light
@@ -32,7 +32,7 @@ model_config:
   transformer_model_name_or_path: "/root/models/BestWishYsh/Helios-Distilled"
   # Initialize from the best smoke checkpoint.
   load_checkpoints_custom: true
-  load_model_path: "/vol/mixkit_curated/train_lora_smoke/checkpoint-50-final"
+  load_model_path: "/vol/mixkit_curated/train_lora_smoke/checkpoint-50"
   load_dcp: false
   upcast_vae: true
   enable_slicing: false
