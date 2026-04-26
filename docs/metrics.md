@@ -15,7 +15,7 @@ frames. The metrics split into:
 - **Secondary** — sanity / side-effect checks (don't regress overall quality).
 
 All thresholds are defined at the Helios inference default of **384 × 640**,
-**16 fps**, 99-frame clips. Rescale thresholds linearly with `min(H, W)` when
+**24 fps**, 99-frame clips. Rescale thresholds linearly with `min(H, W)` when
 evaluating at a different resolution (same convention as VBench).
 
 ## 2. Primary metrics
@@ -34,8 +34,8 @@ EMR(V) = mean_{t in [1..K]}   flow_mag(V_{t-1}, V_t)
   [`eval/1_get_motion_amplitude.py`](../eval/1_get_motion_amplitude.py)
   (`pyr_scale=0.5, levels=3, winsize=15, iterations=3, poly_n=5,
   poly_sigma=1.2`).
-- `N` = total frames in the clip (99 at 16 fps for the diagnostic).
-- `K = 24` ≈ first 1.5 s ≈ one Helios chunk.
+- `N` = total frames in the clip (99 at 24 fps for the diagnostic).
+- `K = 24` ≈ first 1.0 s ≈ one Helios chunk.
 
 **Range.** `[0, +inf)`. Static first second → EMR → 0. Uniform motion across
 the clip → EMR ≈ 1. Typical naturally-filmed web clips: 0.8 – 1.3.
@@ -58,7 +58,7 @@ downscale). `tau` scaling matches VBench `StaticFilter`.
 
 **Range.** `[0, N]`. **At 384 × 640: `tau ≈ 4.5` px/frame.**
 
-**Pass threshold.** TTFM ≤ 6 (≈ 0.25 s at 16 fps).
+**Pass threshold.** TTFM ≤ 6 (≈ 0.25 s at 24 fps).
 
 ## 3. Secondary metrics
 
@@ -128,7 +128,7 @@ paired-t p-value against the zero-shot I2V baseline across the suite.
 ## 6. Reproducibility
 
 - Inference resolution: **384 × 640** (Helios default).
-- Frame rate: **16 fps**, clip length: **99 frames** (≈ 6.2 s).
+- Frame rate: **24 fps**, clip length: **99 frames** (≈ 4.1 s).
 - Seed: **0** for the diagnostic; three fixed seeds `{0, 1, 2}` for the
   fine-tune-vs-baseline comparison.
 - For each metric we report per-clip scores (JSON), mean ± std over the
@@ -137,7 +137,7 @@ paired-t p-value against the zero-shot I2V baseline across the suite.
 - `K = 24` is fixed. If `num_latent_frames_per_chunk` changes, update K in
   the same commit.
 
-## 7. Observed baseline numbers (n = 25, 99-frame clips at 384 × 640)
+## 7. Observed baseline numbers (n = 25, 99-frame clips at 384 × 640, 24 fps)
 
 Raw data: [`outputs/diagnostic/emr_ttfm_results.json`](../outputs/diagnostic/emr_ttfm_results.json).
 Figure: [`outputs/diagnostic/early_motion_figure.png`](../outputs/diagnostic/early_motion_figure.png).
@@ -161,7 +161,7 @@ Figure: [`outputs/diagnostic/early_motion_figure.png`](../outputs/diagnostic/ear
 | I2V − T2V | **−0.355** | −3.94 | **0.0001** | ≈ 0.96 |
 | (I2V + amp) − T2V | −0.274 | −2.67 | 0.0077 | ≈ 0.73 |
 
-Adding an image history to a text prompt reduces first-1.5 s motion magnitude
+Adding an image history to a text prompt reduces first-1.0 s motion magnitude
 by ~41 % (p = 0.0001, n = 25), confirming the warm-start pathology with a
 large effect size. Helios's built-in `--is_amplify_first_chunk` recovers only
 ≈ +0.08 EMR (0.509 → 0.591), still failing the "Quick" threshold and still
@@ -184,3 +184,52 @@ approach.
 - **Figure.** T2V is roughly flat at ~1.2 px/frame from frame 1 onward; I2V
   and I2V+amp start near 0 and take ~3 s to ramp toward T2V's level. The
   K = 24 cutoff sits squarely in the flat region of the I2V curve.
+
+## 8. Smoke-Gate checkpoint comparison (from50 continuation, 24 fps)
+
+We evaluate checkpoints with:
+
+`python eval/smoke_gate.py --baseline-dir outputs/diagnostic/mixkit/i2v --candidate-dir <candidate_dir> --fps 24 ...`
+
+Baseline is fixed to `outputs/diagnostic/mixkit/i2v` across all runs.
+
+### 8.1 Aggregate metrics and decisions
+
+| Candidate | EMR (↑) | TTFM frames | MotionAmp | Early | Late | Early ratio | Late ratio | Amp ratio | Gate |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| `i2v_lora_ckpt50` | 0.469 ± 0.285 | 93.96 ± 8.06 | 0.640 | 0.2486 | 0.7710 | 1.107 | 1.055 | 1.060 | **PASS** |
+| `i2v_lora_from50_ckpt100` | 0.451 ± 0.285 | 92.40 ± 10.25 | 0.812 | 0.3120 | 0.9781 | 1.389 | 1.339 | 1.344 | **PASS** |
+| `i2v_lora_from50_ckpt200` | 0.778 ± 0.543 | 92.20 ± 19.00 | 0.321 | 0.1922 | 0.3638 | 0.856 | 0.498 | 0.531 | **FAIL** |
+
+Baseline reference in these runs:
+
+- EMR = 0.509 ± 0.354
+- TTFM = 94.76 ± 6.20
+- MotionAmp = 0.604
+- Early = 0.2246
+- Late = 0.7305
+
+### 8.2 Interpretation of current best checkpoint
+
+- `i2v_lora_from50_ckpt100` is the strongest checkpoint under the current gate.
+- Compared to baseline, ckpt100 improves all three core motion-strength signals:
+  - early motion: `+38.9%` ratio
+  - late motion: `+33.9%` ratio
+  - motion amplitude: `+34.4%` ratio
+- `i2v_lora_from50_ckpt200` demonstrates over-training style regression:
+  EMR appears high, but late-motion and overall amplitude collapse, and smoke gate correctly fails it.
+
+### 8.3 Artifacts
+
+- ckpt50:
+  - metrics: `outputs/diagnostic/smoke_gate_metrics.json`
+  - figure: `outputs/diagnostic/smoke_gate_figure.png`
+  - decision: `outputs/diagnostic/smoke_gate_decision.json`
+- ckpt100:
+  - metrics: `outputs/diagnostic/smoke_gate_metrics_from50_ckpt100.json`
+  - figure: `outputs/diagnostic/smoke_gate_figure_from50_ckpt100.png`
+  - decision: `outputs/diagnostic/smoke_gate_decision_from50_ckpt100.json`
+- ckpt200:
+  - metrics: `outputs/diagnostic/smoke_gate_metrics_from50_ckpt200.json`
+  - figure: `outputs/diagnostic/smoke_gate_figure_from50_ckpt200.png`
+  - decision: `outputs/diagnostic/smoke_gate_decision_from50_ckpt200.json`

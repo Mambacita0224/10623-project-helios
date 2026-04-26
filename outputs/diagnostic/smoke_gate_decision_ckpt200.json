@@ -1,0 +1,64 @@
+{
+  "passed": false,
+  "baseline_dir": "/Users/zengyuhang/Desktop/academic/2025-2026 spring/10623 GenAI/project/10623-project-helios/outputs/diagnostic/mixkit/i2v",
+  "candidate_dir": "/Users/zengyuhang/Desktop/academic/2025-2026 spring/10623 GenAI/project/10623-project-helios/outputs/diagnostic/mixkit/i2v_lora_ckpt200",
+  "thresholds": {
+    "min_early_abs": 0.18,
+    "min_late_abs": 0.45,
+    "min_ttfm": 90.0,
+    "min_early_ratio": 0.7,
+    "min_late_ratio": 0.7,
+    "min_motion_amp_ratio": 0.7
+  },
+  "baseline": {
+    "early_motion_mean": 0.22455339133739471,
+    "late_motion_mean": 0.7304632067680359,
+    "ttfm_mean": 94.76000213623047,
+    "motion_amp_mean": 0.6039857268333435
+  },
+  "candidate": {
+    "early_motion_mean": 0.18046240508556366,
+    "late_motion_mean": 0.3727615773677826,
+    "ttfm_mean": 93.4800033569336,
+    "motion_amp_mean": 0.32468682527542114
+  },
+  "ratios": {
+    "early_motion": 0.8036503212477263,
+    "late_motion": 0.510308491809028,
+    "motion_amp": 0.5375736724404603
+  },
+  "checks": [
+    {
+      "name": "early_motion_abs",
+      "passed": true,
+      "detail": "candidate=0.1805, threshold=0.1800"
+    },
+    {
+      "name": "late_motion_abs",
+      "passed": false,
+      "detail": "candidate=0.3728, threshold=0.4500"
+    },
+    {
+      "name": "ttfm_abs",
+      "passed": true,
+      "detail": "candidate=93.48, threshold=90.00"
+    },
+    {
+      "name": "early_motion_vs_baseline",
+      "passed": true,
+      "detail": "ratio=0.804, threshold=0.700"
+    },
+    {
+      "name": "late_motion_vs_baseline",
+      "passed": false,
+      "detail": "ratio=0.510, threshold=0.700"
+    },
+    {
+      "name": "motion_amp_vs_baseline",
+      "passed": false,
+      "detail": "ratio=0.538, threshold=0.700"
+    }
+  ],
+  "metrics_json": "/Users/zengyuhang/Desktop/academic/2025-2026 spring/10623 GenAI/project/10623-project-helios/outputs/diagnostic/smoke_gate_metrics_ckpt200.json",
+  "metrics_figure": "/Users/zengyuhang/Desktop/academic/2025-2026 spring/10623 GenAI/project/10623-project-helios/outputs/diagnostic/smoke_gate_figure_ckpt200.png"
+}

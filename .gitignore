@@ -49,8 +49,14 @@ adapters/
 outputs/**
 !outputs/diagnostic/
 outputs/diagnostic/**
-!outputs/diagnostic/emr_ttfm_results.json
-!outputs/diagnostic/early_motion_figure.png
+!outputs/diagnostic/mixkit/
+!outputs/diagnostic/mixkit/**
+!outputs/diagnostic/t2v/
+!outputs/diagnostic/t2v/**
+!outputs/diagnostic/smoke_gate*.json
+!outputs/diagnostic/smoke_gate*.png
+!outputs/diagnostic/emr_ttfm_results*.json
+!outputs/diagnostic/early_motion_figure*.png
 runs/
 
 # Modal local artifacts
